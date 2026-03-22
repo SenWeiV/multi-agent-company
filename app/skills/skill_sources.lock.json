@@ -1,0 +1,43 @@
+{
+  "repositories": [
+    {
+      "repo_name": "agency-agents",
+      "repo_url": "https://github.com/msitarzewski/agency-agents",
+      "commit_sha": "5c669c28e6162a5bfbda8d0837eae163362f52a8",
+      "license": "MIT",
+      "default_branch": "main",
+      "include_paths": [
+        "project-management",
+        "product",
+        "design",
+        "engineering",
+        "testing",
+        "specialized"
+      ],
+      "exclude_names": [
+        "README.md"
+      ]
+    },
+    {
+      "repo_name": "awesome-claude-code-subagents",
+      "repo_url": "https://github.com/VoltAgent/awesome-claude-code-subagents",
+      "commit_sha": "87321636a1c666283d8f17398b45c2644395044b",
+      "license": "MIT",
+      "default_branch": "main",
+      "include_paths": [
+        "categories/01-core-development",
+        "categories/02-language-specialists",
+        "categories/03-infrastructure",
+        "categories/04-quality-security",
+        "categories/05-data-ai",
+        "categories/06-developer-experience",
+        "categories/07-specialized-domains",
+        "categories/08-business-product"
+      ],
+      "exclude_names": [
+        "README.md",
+        "CLAUDE.md"
+      ]
+    }
+  ]
+}

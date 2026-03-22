@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>__APP_NAME__ Dashboard</title>
+    <link rel="stylesheet" href="/dashboard-legacy-static/dashboard.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">One-Person Company Control Plane</p>
+          <h1>CEO Dashboard</h1>
+        </div>
+        <div class="topbar-meta">
+          <span class="badge">Environment: __APP_ENV__</span>
+          <span class="badge badge-accent">API: __API_PREFIX__</span>
+        </div>
+      </header>
+
+      <section class="hero">
+        <div class="hero-copy">
+          <h2>通过一个控制台管理 CEO 指令、虚拟员工、执行状态与 memory。</h2>
+          <p>
+            这是 V1 的最小内部控制台。它直接复用当前 control-plane、runtime、conversation、persona、memory API。
+          </p>
+          <div class="operator-note">
+            <strong>Operator Note</strong>
+            <p>
+              OpenClaw Control UI 现在可以直接从 Dashboard 打开。浏览器侧如果仍看到 `gateway token missing`，
+              优先检查本地 app-dev 与 openclaw-gateway 是否加载了同一份环境变量，而不是怀疑后端没走原生 Gateway。
+            </p>
+          </div>
+        </div>
+        <div class="hero-stats" id="summary-stats">
+          <article class="stat-card">
+            <span>Work Tickets</span>
+            <strong id="stat-tickets">0</strong>
+          </article>
+          <article class="stat-card">
+            <span>Threads</span>
+            <strong id="stat-threads">0</strong>
+          </article>
+          <article class="stat-card">
+            <span>Core Employee Packs</span>
+            <strong id="stat-employees">0</strong>
+          </article>
+          <article class="stat-card">
+            <span>Namespaces</span>
+            <strong id="stat-namespaces">0</strong>
+          </article>
+        </div>
+      </section>
+
+      <main class="grid">
+        <section class="panel panel-inbox">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">CEO Inbox</p>
+              <h3>发起指令</h3>
+            </div>
+            <span class="pill">Conversation + Intake</span>
+          </div>
+          <form id="command-form" class="command-form">
+            <label>
+              <span>Interaction surface</span>
+              <select id="surface" name="surface">
+                <option value="dashboard">Dashboard</option>
+                <option value="feishu_dm">Feishu DM</option>
+                <option value="feishu_group">Feishu Group</option>
+              </select>
+            </label>
+            <label>
+              <span>Channel ID</span>
+              <input id="channel-id" name="channel-id" value="dashboard:ceo" />
+            </label>
+            <label>
+              <span>Bound employee</span>
+              <select id="bound-agent" name="bound-agent">
+                <option value="">自动路由</option>
+              </select>
+            </label>
+            <label class="textarea-field">
+              <span>Intent</span>
+              <textarea
+                id="intent"
+                name="intent"
+                rows="6"
+                placeholder="例如：做一个 AI 产品 MVP，给我一套完整方案"
+              ></textarea>
+            </label>
+            <div class="form-actions">
+              <button type="submit">Create Thread + Intake</button>
+              <button type="button" class="secondary" id="refresh-all">Refresh</button>
+            </div>
+          </form>
+          <div class="callout" id="last-intake">
+            <strong>Last intake</strong>
+            <p>还没有新的交互。</p>
+          </div>
+        </section>
+
+        <section class="panel panel-tickets">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Control Plane</p>
+              <h3>Work Tickets</h3>
+            </div>
+            <span class="pill" id="ticket-count-pill">0 items</span>
+          </div>
+          <div class="list-shell" id="tickets-list"></div>
+        </section>
+
+        <section class="panel panel-detail">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Execution</p>
+              <h3>Selected Ticket</h3>
+            </div>
+            <div class="action-row">
+              <button type="button" id="execute-ticket" class="secondary">Run Runtime</button>
+              <button type="button" id="restore-ticket" class="ghost">Restore Latest Checkpoint</button>
+            </div>
+          </div>
+          <div class="detail-stack">
+            <article class="detail-card">
+              <h4>Ticket</h4>
+              <pre id="ticket-detail">选择一个 Work Ticket 查看详情。</pre>
+            </article>
+            <article class="detail-card">
+              <h4>TaskGraph</h4>
+              <div id="taskgraph-detail" class="node-grid empty-state">暂无 TaskGraph</div>
+            </article>
+            <article class="detail-card">
+              <h4>RunTrace</h4>
+              <div id="runtrace-detail" class="timeline empty-state">暂无 RunTrace</div>
+            </article>
+            <article class="detail-card">
+              <h4>Artifacts</h4>
+              <div id="artifacts-detail" class="memory-list empty-state">暂无 Artifact Blob</div>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel panel-memory">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Memory Fabric</p>
+              <h3>Ticket Memory</h3>
+            </div>
+            <span class="pill">agent / department / company</span>
+          </div>
+          <div id="memory-detail" class="memory-list empty-state">选择工单后显示记忆记录。</div>
+        </section>
+
+        <section class="panel panel-employees">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Seat Packs</p>
+              <h3>Core Employee Packs</h3>
+            </div>
+            <span class="pill">agency-agents compiled</span>
+          </div>
+          <div id="employee-packs" class="employee-grid"></div>
+        </section>
+
+        <section class="panel panel-threads">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Conversation Surfaces</p>
+              <h3>Threads & Namespaces</h3>
+            </div>
+          </div>
+          <div class="two-column">
+            <div>
+              <h4>Threads</h4>
+              <div id="threads-list" class="list-shell compact"></div>
+            </div>
+            <div>
+              <h4>Namespaces</h4>
+              <div id="namespaces-list" class="list-shell compact"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel panel-feishu">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Feishu Ops</p>
+              <h3>Bots, Channels & Events</h3>
+              <p class="panel-copy">查看飞书入口、通道绑定以及最近收发记录。这里是运营观察面，不是最终配置真相源。</p>
+            </div>
+            <span class="pill">V1 read-only config + test send</span>
+          </div>
+          <div class="two-column">
+            <div>
+              <h4>Bot Apps</h4>
+              <div id="feishu-bots-list" class="list-shell compact"></div>
+            </div>
+            <div>
+              <h4>Channel Bindings</h4>
+              <div id="feishu-channels-list" class="list-shell compact"></div>
+            </div>
+          </div>
+          <div class="two-column">
+            <div>
+              <h4>Recent Inbound</h4>
+              <div id="feishu-inbound-list" class="list-shell compact"></div>
+            </div>
+            <div>
+              <h4>Recent Outbound</h4>
+              <div id="feishu-outbound-list" class="list-shell compact"></div>
+            </div>
+          </div>
+          <div class="two-column">
+            <div>
+              <h4>Dead Letters</h4>
+              <div class="toolbar-row">
+                <input id="feishu-dead-letter-search" placeholder="搜索 outbound/chat/text" />
+              </div>
+              <div id="feishu-dead-letters" class="list-shell compact"></div>
+            </div>
+            <div>
+              <h4>Replay Audit</h4>
+              <div class="toolbar-row">
+                <input id="feishu-replay-audit-search" placeholder="搜索 replay ref/chat/ticket" />
+              </div>
+              <div id="feishu-replay-audit" class="list-shell compact"></div>
+            </div>
+          </div>
+          <div class="two-column">
+            <div>
+              <h4>Selected Dead Letter</h4>
+              <div id="feishu-dead-letter-detail" class="list-shell compact"></div>
+            </div>
+            <div>
+              <h4>Feishu Config Editor</h4>
+              <div id="feishu-config-editor" class="list-shell compact"></div>
+            </div>
+          </div>
+          <form id="feishu-send-form" class="command-form feishu-send-form">
+            <label>
+              <span>Bot App</span>
+              <select id="feishu-app-id" name="feishu-app-id"></select>
+            </label>
+            <label>
+              <span>Chat ID</span>
+              <input id="feishu-chat-id" name="feishu-chat-id" placeholder="oc_xxx" />
+            </label>
+            <label class="textarea-field">
+              <span>Test Message</span>
+              <textarea id="feishu-text" name="feishu-text" rows="3" placeholder="发送一条测试消息"></textarea>
+            </label>
+            <label>
+              <span>Mention employee ids</span>
+              <input id="feishu-mentions" name="feishu-mentions" placeholder="chief-of-staff,product-lead" />
+            </label>
+            <div class="form-actions">
+              <button type="submit">Send Feishu Test</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel panel-openclaw">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">OpenClaw Runtime</p>
+              <h3>Runtime / Session Detail</h3>
+              <p class="panel-copy">
+                区分两类状态：后端实际是否走 OpenClaw Gateway，以及浏览器版 Control UI 是否已填入 token。
+              </p>
+            </div>
+            <span class="pill">read-only gateway ops</span>
+          </div>
+          <div class="two-column">
+            <div>
+              <h4>Control UI Access</h4>
+              <div id="openclaw-token-setup" class="list-shell compact"></div>
+            </div>
+            <div>
+              <h4>Gateway Health</h4>
+              <div id="openclaw-gateway-health" class="list-shell compact"></div>
+            </div>
+            <div>
+              <h4>Runtime Mode</h4>
+              <div id="openclaw-runtime-mode" class="list-shell compact"></div>
+            </div>
+          </div>
+          <div class="two-column">
+            <div>
+              <h4>Active Sessions</h4>
+              <div class="toolbar-row">
+                <input id="openclaw-session-search" placeholder="搜索 thread/channel/ticket/session" />
+                <select id="openclaw-session-surface-filter">
+                  <option value="">全部 surface</option>
+                  <option value="dashboard">dashboard</option>
+                  <option value="feishu_dm">feishu_dm</option>
+                  <option value="feishu_group">feishu_group</option>
+                </select>
+                <select id="openclaw-session-status-filter">
+                  <option value="">全部 status</option>
+                  <option value="draft">draft</option>
+                  <option value="linked">linked</option>
+                  <option value="active">active</option>
+                  <option value="restored">restored</option>
+                </select>
+              </div>
+              <div id="openclaw-sessions" class="list-shell compact"></div>
+            </div>
+            <div>
+              <h4>Recent Native Runs</h4>
+              <div class="toolbar-row">
+                <input id="openclaw-run-search" placeholder="搜索 run/ticket/model/strategy" />
+                <select id="openclaw-run-surface-filter">
+                  <option value="">全部 surface</option>
+                  <option value="dashboard">dashboard</option>
+                  <option value="feishu_dm">feishu_dm</option>
+                  <option value="feishu_group">feishu_group</option>
+                </select>
+                <select id="openclaw-run-status-filter">
+                  <option value="">全部 status</option>
+                  <option value="routed">routed</option>
+                  <option value="active">active</option>
+                  <option value="completed">completed</option>
+                  <option value="escalated">escalated</option>
+                  <option value="blocked">blocked</option>
+                </select>
+              </div>
+              <div id="openclaw-recent-runs" class="list-shell compact"></div>
+            </div>
+          </div>
+          <div class="two-column">
+            <div>
+              <h4>Selected Session Detail</h4>
+              <div id="openclaw-session-detail" class="list-shell compact"></div>
+            </div>
+            <div>
+              <h4>Selected Native Run Detail</h4>
+              <div id="openclaw-run-detail" class="list-shell compact"></div>
+            </div>
+          </div>
+          <div class="two-column">
+            <div>
+              <h4>Hook Entries</h4>
+              <div id="openclaw-hooks" class="list-shell compact"></div>
+            </div>
+            <div>
+              <h4>Ops Alerts</h4>
+              <div id="openclaw-issues" class="list-shell compact"></div>
+            </div>
+          </div>
+          <div class="two-column">
+            <div>
+              <h4>Agent Bindings</h4>
+              <div id="openclaw-bindings" class="list-shell compact"></div>
+            </div>
+            <div>
+              <h4>Workspace Bundles</h4>
+              <div id="openclaw-workspaces" class="list-shell compact"></div>
+            </div>
+          </div>
+          <div class="two-column">
+            <div>
+              <h4>OpenClaw Config Editor</h4>
+              <div id="openclaw-config-editor" class="list-shell compact"></div>
+            </div>
+            <div>
+              <h4>OpenClaw Hook Editor</h4>
+              <div id="openclaw-hook-editor" class="list-shell compact"></div>
+            </div>
+          </div>
+          <div class="operator-note operator-note-inline">
+            <strong>Control UI 提示</strong>
+            <p>
+              Dashboard 按钮会走后端 launch 路由并自动注入本地 Gateway token；如果这里仍报鉴权问题，优先检查 `.env`
+              是否同时被 `app-dev` 和 `openclaw-gateway` 使用。
+            </p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      window.__dashboardConfig = {
+        apiPrefix: "__API_PREFIX__",
+      };
+    </script>
+    <script src="/dashboard-legacy-static/dashboard.js" defer></script>
+  </body>
+</html>
