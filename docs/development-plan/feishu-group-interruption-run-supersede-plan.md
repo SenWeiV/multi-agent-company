@@ -288,7 +288,7 @@ delivery guard 规则：
 因此 V1 的优先顺序是：
 
 1. 先补强 `thread + run + delivery guard + baton state`
-2. 再考虑把失败经验蒸馏进长期 memory
+2. `memory distillation` 从本方案解耦，留到后续 `Memory Fabric` 专项单独设计与接入
 
 ## 9. 变更范围
 
@@ -308,6 +308,7 @@ delivery guard 规则：
 - 新建独立 `group session` 业务对象
 - 将 `20` 轮预算提升到 thread 级
 - 用长期 memory 直接驱动实时接棒
+- `memory distillation` / 长期 memory 写入路径
 
 ## 10. 建议的数据与事件字段
 
@@ -367,11 +368,12 @@ delivery guard 规则：
 
 - 更细的排序策略
 - 更丰富的审计与回放视图
-- 失败经验蒸馏到长期 memory
+- `memory distillation` 已解耦，后续归入 `Memory Fabric` 专项
 
 ## 13. 与现有文档的关系
 
 - Feishu 表面与 visible-room 的总规则，仍以 [Feishu Visible Orchestration Plan](./feishu-visible-orchestration-plan.md) 为准。
 - `Web Dashboard + Feishu` 的双表面和会话边界，仍以 [前端 Dashboard 与飞书交互方案](./frontend-and-feishu-interaction-design.md) 为准。
 - 实施层的模块、字段、事件与落地顺序，见 [Feishu Group Interruption Implementation Breakdown](./feishu-group-interruption-implementation-breakdown.md)。
+- 长期记忆蒸馏与 promotion 路径，仍以 [Memory Fabric 设计](../memory-fabric-design.md) 为准。
 - 本文是这两者之下的一个补充专题，专门解决“群聊中断、run supersede、接棒状态连续性”的实现语义。

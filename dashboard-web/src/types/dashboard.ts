@@ -45,9 +45,15 @@ export interface ConversationThread {
 }
 
 export interface TranscriptEntry {
+  source?: string
   actor: string
   text: string
   created_at: string
+  app_id?: string | null
+  status?: string | null
+  source_kind?: string | null
+  dropped_as_stale?: boolean
+  stale_drop_reason?: string | null
 }
 
 export interface EmployeePackSummary {
@@ -278,12 +284,19 @@ export interface OpenClawSessionView {
   surface: string
   status: string
   work_ticket_ref?: string | null
+  active_runtrace_ref?: string | null
+  delivery_guard_epoch?: number
+  pending_handoff_summary?: string | null
+  last_committed_state_summary?: string | null
   openclaw_session_refs?: Record<string, string>
 }
 
 export interface OpenClawSessionDetail extends OpenClawSessionView {
   runtrace_ref?: string | null
   taskgraph_ref?: string | null
+  superseded_runtrace_refs?: string[]
+  last_committed_state?: JsonObject
+  pending_handoff?: JsonObject | null
   transcript_count?: number
   last_transcript_at?: string | null
   transcript?: TranscriptEntry[]
@@ -316,6 +329,13 @@ export interface OpenClawRunView {
   final_handoff_targets?: string[]
   handoff_contract_violation?: boolean
   handoff_repetition_violation?: boolean
+  supersedes_runtrace_ref?: string | null
+  superseded_by_runtrace_ref?: string | null
+  visible_turn_count?: number
+  delivery_guard_epoch?: number
+  interruption_reason?: string | null
+  interruption_dispatch_targets?: string[]
+  turn_limit_scope?: string
   spoken_bot_ids?: string[]
   remaining_bot_ids?: string[]
   remaining_turn_budget?: number

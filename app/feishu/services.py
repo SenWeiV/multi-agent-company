@@ -1005,6 +1005,21 @@ class FeishuSurfaceAdapterService:
                 error_detail=existing.error_detail,
             )
 
+        if request.runtrace_ref:
+            get_control_plane_service().append_run_trace_event(
+                request.runtrace_ref,
+                RunEvent(
+                    event_type="delivery_guard_passed",
+                    message="Feishu outbound reply passed the delivery guard and can proceed to delivery.",
+                    metadata={
+                        "thread_id": request.thread_ref or "",
+                        "runtrace_id": request.runtrace_ref,
+                        "delivery_guard_epoch": str(request.delivery_guard_epoch or 0),
+                        "source_kind": request.source_kind,
+                    },
+                ),
+            )
+
         payload = {
             "receive_id": request.chat_id,
             "msg_type": "text",
@@ -2083,15 +2098,22 @@ class FeishuSurfaceAdapterService:
         if not normalized_message:
             return []
 
-        target_ids: list[str] = []
-        for binding in self._conversation.list_bot_seat_bindings():
+        matched_targets: list[tuple[int, int, str]] = []
+        for binding_index, binding in enumerate(self._conversation.list_bot_seat_bindings()):
             config = get_feishu_bot_app_config_by_employee_id(binding.virtual_employee)
             if config is None:
                 continue
             aliases = self._bot_name_aliases(binding.virtual_employee, config)
-            if any(alias and alias in normalized_message for alias in aliases):
-                target_ids.append(binding.virtual_employee)
-        return list(dict.fromkeys(target_ids))
+            positions = [
+                normalized_message.find(alias)
+                for alias in aliases
+                if alias and normalized_message.find(alias) >= 0
+            ]
+            if not positions:
+                continue
+            matched_targets.append((min(positions), binding_index, binding.virtual_employee))
+        matched_targets.sort(key=lambda item: (item[0], item[1]))
+        return [employee_id for _, _, employee_id in matched_targets]
 
     def _resolve_deterministic_text_targets(self, user_message: str) -> list[str]:
         return self._resolve_deterministic_name_targets(user_message)

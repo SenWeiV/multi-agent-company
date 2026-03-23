@@ -1145,6 +1145,7 @@ def test_feishu_group_interruption_defers_source_turn_to_correction_bot(monkeypa
             },
         },
     )
+    settings.feishu_visible_handoff_turn_limit = 4
     second = client.post(
         "/api/v1/feishu/events",
         json={
@@ -1194,6 +1195,214 @@ def test_feishu_group_interruption_defers_source_turn_to_correction_bot(monkeypa
     assert [app_id for app_id, _, _ in second_run_messages] == ["cli-quality-lead", "cli-chief-of-staff"]
     assert second_run_messages[0][2].startswith("Quality Lead 抱歉")
     assert "继续报8" in second_run_messages[1][2]
+
+
+def test_feishu_group_interruption_orders_additional_targets_by_message_appearance(monkeypatch) -> None:
+    suffix = uuid4().hex[:8]
+    settings = get_settings()
+    sent_messages: list[tuple[str, str, str, str, str]] = []
+
+    def fake_bot_config(employee_id: str):
+        mapping = {
+            "chief-of-staff": FeishuBotAppConfig(
+                employee_id="chief-of-staff",
+                app_id="cli-chief-of-staff",
+                app_secret="secret",
+                display_name="OPC - Chief of Staff",
+            ),
+            "quality-lead": FeishuBotAppConfig(
+                employee_id="quality-lead",
+                app_id="cli-quality-lead",
+                app_secret="secret",
+                display_name="OPC - Quality Lead",
+            ),
+            "design-lead": FeishuBotAppConfig(
+                employee_id="design-lead",
+                app_id="cli-design-lead",
+                app_secret="secret",
+                display_name="OPC - Design Lead",
+            ),
+            "product-lead": FeishuBotAppConfig(
+                employee_id="product-lead",
+                app_id="cli-product-lead",
+                app_secret="secret",
+                display_name="OPC - Product Lead",
+            ),
+        }
+        return mapping.get(employee_id)
+
+    class FakeDialogueService:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def generate_reply(self, **kwargs):
+            self.calls.append(kwargs)
+            employee_id = kwargs["employee_id"]
+            user_message = kwargs["user_message"]
+            turn_mode = kwargs.get("turn_mode", "source")
+            if "开始玩逢7过" in user_message:
+                if turn_mode == "source":
+                    return OpenClawChatResult(
+                        employee_id=employee_id,
+                        openclaw_agent_id=f"opc-{employee_id}",
+                        model_ref=f"openclaw:opc-{employee_id}",
+                        reply_text="Chief of Staff 先起头。请 Quality Lead 判断这一步。",
+                        strategy="openclaw_native_gateway",
+                        session_key=f"agent:opc-{employee_id}:feishu:group:test",
+                        handoff_targets=["quality-lead"],
+                        handoff_reason="判断是否该继续报8",
+                        turn_mode="source",
+                    )
+                if employee_id == "quality-lead":
+                    return OpenClawChatResult(
+                        employee_id=employee_id,
+                        openclaw_agent_id="opc-quality-lead",
+                        model_ref="openclaw:opc-quality-lead",
+                        reply_text="Quality Lead 判断后交还给 Chief of Staff，继续报8。",
+                        strategy="openclaw_native_gateway",
+                        session_key="agent:opc-quality-lead:feishu:group:test",
+                        handoff_targets=["chief-of-staff"],
+                        handoff_reason="继续报8",
+                        turn_mode="handoff_target",
+                    )
+                return OpenClawChatResult(
+                    employee_id=employee_id,
+                    openclaw_agent_id=f"opc-{employee_id}",
+                    model_ref=f"openclaw:opc-{employee_id}",
+                    reply_text=f"{employee_id} 完成这一轮回复。",
+                    strategy="openclaw_native_gateway",
+                    session_key=f"agent:opc-{employee_id}:feishu:group:test",
+                    turn_mode="handoff_target",
+                )
+            if "design lead 你先补充一下" in user_message:
+                if turn_mode == "source":
+                    raise AssertionError("interruption run should still defer the source turn to quality-lead")
+                reply_map = {
+                    "quality-lead": "Quality Lead 先纠正刚才的判断，这一步先澄清。",
+                    "chief-of-staff": "Chief of Staff 收到更正，现在继续报8。",
+                    "design-lead": "Design Lead 先补充为什么这一步体验上会让人困惑。",
+                    "product-lead": "Product Lead 再补充这一步规则表达应该怎么改。",
+                }
+                return OpenClawChatResult(
+                    employee_id=employee_id,
+                    openclaw_agent_id=f"opc-{employee_id}",
+                    model_ref=f"openclaw:opc-{employee_id}",
+                    reply_text=reply_map[employee_id],
+                    strategy="openclaw_native_gateway",
+                    session_key=f"agent:opc-{employee_id}:feishu:group:test",
+                    turn_mode="handoff_target",
+                )
+            raise AssertionError(f"unexpected test input: {user_message}")
+
+    dialogue_service = FakeDialogueService()
+
+    def fake_send(self, request):
+        sent_messages.append(
+            (
+                request.app_id,
+                request.source_kind,
+                request.thread_ref or "",
+                request.runtrace_ref or "",
+                request.text,
+            )
+        )
+        return FeishuSendMessageResult(
+            app_id=request.app_id,
+            receive_id_type=request.receive_id_type,
+            receive_id=request.chat_id,
+            message_id=f"om-interruption-extra-order-{len(sent_messages)}-{suffix}",
+            status="sent",
+            outbound_ref=f"fo-interruption-extra-order-{len(sent_messages)}-{suffix}",
+        )
+
+    monkeypatch.setattr("app.feishu.services.get_feishu_bot_app_config_by_employee_id", fake_bot_config)
+    monkeypatch.setattr(
+        "app.feishu.services.get_feishu_bot_app_config_by_app_id",
+        lambda app_id: next(
+            config
+            for config in [
+                fake_bot_config("chief-of-staff"),
+                fake_bot_config("quality-lead"),
+                fake_bot_config("design-lead"),
+                fake_bot_config("product-lead"),
+            ]
+            if config and config.app_id == app_id
+        ),
+    )
+    monkeypatch.setattr("app.feishu.services.get_openclaw_dialogue_service", lambda: dialogue_service)
+    monkeypatch.setattr("app.feishu.services.FeishuSurfaceAdapterService.send_text_message", fake_send)
+
+    monkeypatch.setattr(settings, "feishu_visible_handoff_turn_limit", 2)
+    first = client.post(
+        "/api/v1/feishu/events",
+        json={
+            "schema": "2.0",
+            "header": {
+                "event_type": "im.message.receive_v1",
+                "app_id": "cli-chief-of-staff",
+                "event_id": f"evt-interruption-extra-order-first-{suffix}",
+            },
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou-user-interruption-extra-order"}},
+                "message": {
+                    "message_id": f"om-interruption-extra-order-first-{suffix}",
+                    "message_type": "text",
+                    "chat_type": "group",
+                    "chat_id": f"oc_group_interruption_extra_order_{suffix}",
+                    "content": '{"text":"@_user_1 开始玩逢7过"}',
+                    "mentions": [
+                        {"id": {"open_id": "ou-chief-per-app"}, "key": "@_user_1", "name": "Chief of Staff"},
+                    ],
+                },
+            },
+        },
+    )
+    settings.feishu_visible_handoff_turn_limit = 4
+    second = client.post(
+        "/api/v1/feishu/events",
+        json={
+            "schema": "2.0",
+            "header": {
+                "event_type": "im.message.receive_v1",
+                "app_id": "cli-chief-of-staff",
+                "event_id": f"evt-interruption-extra-order-second-{suffix}",
+            },
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou-user-interruption-extra-order"}},
+                "message": {
+                    "message_id": f"om-interruption-extra-order-second-{suffix}",
+                    "message_type": "text",
+                    "chat_type": "group",
+                    "chat_id": f"oc_group_interruption_extra_order_{suffix}",
+                    "content": '{"text":"@_user_1 等等，quality lead 刚才为什么让 chief-of-staff 继续报8？design lead 你先补充一下，product lead 再补充。"}',
+                    "mentions": [
+                        {"id": {"open_id": "ou-chief-per-app"}, "key": "@_user_1", "name": "Chief of Staff"},
+                    ],
+                },
+            },
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["target_agent_ids"] == ["quality-lead", "chief-of-staff", "design-lead", "product-lead"]
+
+    second_thread_id = second.json()["thread_id"]
+    second_runtrace_id = second.json()["runtrace_id"]
+    second_run_messages = [
+        (app_id, source_kind, text)
+        for app_id, source_kind, thread_ref, runtrace_ref, text in sent_messages
+        if thread_ref == second_thread_id
+        and runtrace_ref == second_runtrace_id
+        and source_kind != "visible_handoff_notice"
+    ]
+    assert [app_id for app_id, _, _ in second_run_messages] == [
+        "cli-quality-lead",
+        "cli-chief-of-staff",
+        "cli-design-lead",
+        "cli-product-lead",
+    ]
+
 
 def test_feishu_group_plain_text_target_forces_visible_handoff(monkeypatch) -> None:
     suffix = uuid4().hex[:8]
@@ -2628,6 +2837,79 @@ def test_feishu_send_text_message_drops_stale_runtrace_before_delivery(monkeypat
     second_run = client.get(f"/api/v1/control-plane/run-traces/{second_payload['runtrace_id']}").json()
     assert any(event["event_type"] == "stale_reply_dropped" for event in first_run["events"])
     assert second_run["delivery_guard_epoch"] == 2
+
+
+def test_feishu_send_text_message_records_delivery_guard_passed(monkeypatch) -> None:
+    service = get_feishu_surface_adapter_service()
+    suffix = uuid4().hex[:8]
+
+    intake_response = client.post(
+        "/api/v1/conversations/intake",
+        json={
+            "surface": "feishu_dm",
+            "channel_id": f"feishu:dm:delivery-guard-{suffix}",
+            "participant_ids": ["vincent", "feishu-chief-of-staff"],
+            "bound_agent_ids": ["chief-of-staff"],
+            "command": {"intent": "测试 delivery guard passed"},
+        },
+    )
+    assert intake_response.status_code == 200
+    intake_payload = intake_response.json()
+    thread_id = intake_payload["thread"]["thread_id"]
+    runtrace_id = intake_payload["command_result"]["run_trace"]["runtrace_id"]
+    get_conversation_service().set_active_runtrace(
+        thread_id,
+        runtrace_id=runtrace_id,
+        delivery_guard_epoch=3,
+    )
+
+    class FakeBlob:
+        object_id = f"blob-guard-{suffix}"
+        bucket = "artifacts"
+        object_key = f"feishu/blob-guard-{suffix}.txt"
+
+    class FakeArtifactStore:
+        def store_text(self, **kwargs):
+            return FakeBlob()
+
+    monkeypatch.setattr(
+        "app.feishu.services.get_feishu_bot_app_config_by_app_id",
+        lambda app_id: FeishuBotAppConfig(
+            employee_id="chief-of-staff",
+            app_id=app_id,
+            app_secret="secret",
+            display_name="OPC - Chief of Staff",
+        ),
+    )
+    monkeypatch.setattr(service, "_get_tenant_access_token", lambda app_id, app_secret: "tenant-token")
+    monkeypatch.setattr("app.feishu.services.get_artifact_store_service", lambda: FakeArtifactStore())
+    monkeypatch.setattr(
+        service,
+        "_post_json",
+        lambda *args, **kwargs: {"data": {"message_id": f"om-delivery-guard-{suffix}"}},
+    )
+
+    result = service.send_text_message(
+        FeishuSendMessageRequest(
+            app_id="cli-chief-of-staff",
+            chat_id=f"oc_delivery_guard_{suffix}",
+            text="这是一条通过 delivery guard 的回复",
+            thread_ref=thread_id,
+            runtrace_ref=runtrace_id,
+            source_kind="auto_reply",
+            delivery_guard_epoch=3,
+        )
+    )
+
+    assert result.status == "sent"
+
+    run_trace = client.get(f"/api/v1/control-plane/run-traces/{runtrace_id}").json()
+    guard_events = [event for event in run_trace["events"] if event["event_type"] == "delivery_guard_passed"]
+    assert len(guard_events) == 1
+    assert guard_events[0]["metadata"]["thread_id"] == thread_id
+    assert guard_events[0]["metadata"]["runtrace_id"] == runtrace_id
+    assert guard_events[0]["metadata"]["delivery_guard_epoch"] == "3"
+    assert guard_events[0]["metadata"]["source_kind"] == "auto_reply"
 
 
 def test_feishu_real_bot_event_uses_openclaw_dialogue_reply(monkeypatch) -> None:

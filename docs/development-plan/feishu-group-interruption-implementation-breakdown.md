@@ -400,7 +400,7 @@ class PendingHandoffState(BaseModel):
 
 - Dashboard / API 展示 superseded run 与 stale outbound
 - 更细的排序策略
-- 可选的后续 memory distillation
+- `memory distillation` 已从本方案解耦，后续归入 `Memory Fabric` 专项
 
 ## 8. 风险与约束
 
@@ -413,6 +413,7 @@ class PendingHandoffState(BaseModel):
 
 - 本次不做真正的 runtime cancel token。
 - 本次不引入新的长期 memory 写入路径。
+- 本次不接入 `memory distillation`，避免与 `Memory Fabric` 专项职责重叠。
 - 本次不把 `20` 轮预算提升到 thread 级。
 
 ## 9. 建议的最小开发顺序
@@ -425,4 +426,5 @@ class PendingHandoffState(BaseModel):
 ## 10. 与现有文档的关系
 
 - 行为与产品语义以 [Feishu Group Interruption And Run Supersede Plan](./feishu-group-interruption-run-supersede-plan.md) 为准。
+- 长期记忆蒸馏、promotion 与 recall 边界以 [Memory Fabric 设计](../memory-fabric-design.md) 为准。
 - 本文负责把该方案翻译成开发者可以直接执行的实施拆解。

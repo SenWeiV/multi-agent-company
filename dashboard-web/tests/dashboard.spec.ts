@@ -167,12 +167,16 @@ const collections = {
       surface: "dashboard",
       status: "active",
       work_ticket_ref: "wt_001",
+      active_runtrace_ref: "rt_002",
+      delivery_guard_epoch: 2,
+      pending_handoff_summary: "quality-lead -> chief-of-staff | instruction=继续报8",
+      last_committed_state_summary: "{\"next_expected\":8}",
       openclaw_session_refs: { "chief-of-staff": "session_cos_001" },
     },
   ],
   openclawRecentRuns: [
     {
-      runtrace_id: "rt_001",
+      runtrace_id: "rt_002",
       work_ticket_ref: "wt_001",
       model_ref: "openclaw:opc-chief-of-staff",
       strategy: "openclaw_native_gateway",
@@ -183,8 +187,34 @@ const collections = {
       latest_handoff_targets: ["product-lead"],
       latest_handoff_source_agent: "chief-of-staff",
       latest_handoff_reason: "Need product framing",
+      supersedes_runtrace_ref: "rt_001",
+      visible_turn_count: 2,
+      delivery_guard_epoch: 2,
+      interruption_reason: "user_interruption",
+      interruption_dispatch_targets: ["quality-lead", "chief-of-staff"],
+      remaining_turn_budget: 18,
+      latest_turn_mode: "handoff_target",
       last_event_at: "2026-03-15T10:05:00Z",
       session_refs: { "chief-of-staff": "session_cos_001" },
+    },
+    {
+      runtrace_id: "rt_001",
+      work_ticket_ref: "wt_001",
+      model_ref: "openclaw:opc-quality-lead",
+      strategy: "openclaw_native_gateway",
+      status: "superseded",
+      surface: "dashboard",
+      interaction_mode: "formal_project",
+      handoff_count: 1,
+      latest_handoff_targets: ["chief-of-staff"],
+      latest_handoff_source_agent: "quality-lead",
+      latest_handoff_reason: "Continue the number game",
+      superseded_by_runtrace_ref: "rt_002",
+      visible_turn_count: 1,
+      delivery_guard_epoch: 1,
+      remaining_turn_budget: 19,
+      last_event_at: "2026-03-15T10:04:00Z",
+      session_refs: { "quality-lead": "session_quality_001" },
     },
   ],
   openclawHooks: {
@@ -281,16 +311,55 @@ const details = {
   },
   session: {
     ...collections.openclawSessions[0],
-    transcript_count: 1,
-    last_transcript_at: "2026-03-15T10:00:00Z",
-    transcript: collections.threads[0].transcript,
+    runtrace_ref: "rt_002",
+    transcript_count: 3,
+    last_transcript_at: "2026-03-15T10:05:00Z",
+    superseded_runtrace_refs: ["rt_001"],
+    last_committed_state: { game: "count7", last_valid_number: 7, next_expected: 8, current_owner: "chief-of-staff" },
+    pending_handoff: {
+      source_agent_id: "quality-lead",
+      target_agent_id: "chief-of-staff",
+      instruction: "继续报8",
+      reason: "quality correction",
+    },
+    transcript: [
+      {
+        source: "feishu_inbound",
+        actor: "vincent",
+        text: "等等，quality lead 刚才为什么让 chief-of-staff 继续报8？",
+        created_at: "2026-03-15T10:04:30Z",
+      },
+      {
+        source: "feishu_outbound",
+        actor: "cli_demo",
+        text: "Chief of Staff replied from the stale run.",
+        created_at: "2026-03-15T10:04:45Z",
+        status: "dropped",
+        source_kind: "visible_handoff_reply",
+        dropped_as_stale: true,
+        stale_drop_reason: "superseded_run_delivery_guard",
+      },
+      {
+        source: "feishu_outbound",
+        actor: "cli_demo",
+        text: "Quality lead corrected the handoff and Chief of Staff resumed with 8.",
+        created_at: "2026-03-15T10:05:00Z",
+        status: "sent",
+        source_kind: "runtime_reply",
+      },
+    ],
     bound_agent_ids: ["chief-of-staff"],
     participant_ids: ["ceo", "chief-of-staff"],
     recent_run_strategies: ["openclaw_native_gateway"],
   },
   run: {
     ...collections.openclawRecentRuns[0],
-    events: [{ event_type: "runtime_execution_completed", message: "Run completed", created_at: "2026-03-15T10:05:00Z" }],
+    thread_ref: "thread_001",
+    stop_reason: "user_recovery_completed",
+    events: [
+      { event_type: "visible_agent_handoff", message: "quality-lead handed off to chief-of-staff", created_at: "2026-03-15T10:04:40Z" },
+      { event_type: "runtime_execution_completed", message: "Run completed", created_at: "2026-03-15T10:05:00Z" },
+    ],
   },
   agentDetail: {
     agent: {
@@ -462,7 +531,7 @@ test.beforeEach(async ({ page }) => {
           return details.deadLetter
         case "/api/v1/openclaw/gateway/sessions/thread_001":
           return details.session
-        case "/api/v1/openclaw/gateway/recent-runs/rt_001":
+        case "/api/v1/openclaw/gateway/recent-runs/rt_002":
           return details.run
         case "/api/v1/openclaw/agents/chief-of-staff/detail":
           return details.agentDetail
@@ -518,4 +587,20 @@ test("dashboard shell can load and navigate major views", async ({ page }) => {
   await expect(page.getByText("Chief of Staff Native")).toBeVisible()
   await page.getByRole("tab", { name: "Native Skills" }).click()
   await expect(page.getByText("Project Manager Senior")).toBeVisible()
+})
+
+test("openclaw runtime surfaces superseded runs and stale outbound signals", async ({ page }) => {
+  await page.goto("/dashboard")
+
+  await page.getByRole("link", { name: "OpenClaw Runtime", exact: true }).click()
+  await expect(page.getByText("Selected Session Detail").first()).toBeVisible()
+  await expect(page.getByText("Transcript Signals")).toBeVisible()
+  await expect(page.getByText("stale dropped")).toBeVisible()
+  await expect(page.getByText("superseded_run_delivery_guard", { exact: true }).first()).toBeVisible()
+
+  await page.getByRole("tab", { name: "Native Runs" }).click()
+  await expect(page.getByText("Supersede Chain")).toBeVisible()
+  await expect(page.getByText("supersedes: rt_001", { exact: true }).first()).toBeVisible()
+  await expect(page.getByText("dispatch: quality-lead, chief-of-staff", { exact: true }).first()).toBeVisible()
+  await expect(page.getByText("delivery guard epoch: 2", { exact: true }).first()).toBeVisible()
 })

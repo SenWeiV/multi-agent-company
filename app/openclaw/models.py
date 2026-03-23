@@ -322,6 +322,10 @@ class OpenClawTranscriptEntryView(BaseModel):
     text: str
     created_at: datetime
     app_id: str | None = None
+    status: str | None = None
+    source_kind: str | None = None
+    dropped_as_stale: bool = False
+    stale_drop_reason: str | None = None
 
 
 class OpenClawGatewaySessionDetailView(BaseModel):

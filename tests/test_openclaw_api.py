@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -10,6 +11,8 @@ from app.conversation.services import get_conversation_service
 from app.core.config import get_settings
 from app.control_plane.models import RunEvent
 from app.control_plane.services import get_control_plane_service
+from app.feishu.models import FeishuBotAppConfig, FeishuOutboundMessageRecord, FeishuSendMessageRequest
+from app.feishu.services import get_feishu_surface_adapter_service
 from app.main import app
 from app.openclaw.services import get_openclaw_gateway_adapter
 
@@ -522,6 +525,64 @@ def test_openclaw_gateway_health_and_runtime_mode_endpoints(monkeypatch) -> None
     assert hooks_response.json()["entries"][0]["hook_id"] == "bootstrap-extra-files"
 
 
+def test_openclaw_gateway_issues_include_stale_feishu_outbound(monkeypatch) -> None:
+    service = get_feishu_surface_adapter_service()
+    suffix = f"openclaw-gateway-stale-{uuid4().hex[:8]}"
+    intake_response = client.post(
+        "/api/v1/conversations/intake",
+        json={
+            "surface": "feishu_dm",
+            "channel_id": f"feishu:dm:{suffix}",
+            "participant_ids": ["vincent", "feishu-chief-of-staff"],
+            "bound_agent_ids": ["chief-of-staff"],
+            "command": {"intent": "测试 stale outbound 在 gateway issues 中可见"},
+        },
+    )
+    assert intake_response.status_code == 200
+    intake_payload = intake_response.json()
+    thread_id = intake_payload["thread"]["thread_id"]
+    runtrace_id = intake_payload["command_result"]["run_trace"]["runtrace_id"]
+    get_conversation_service().set_active_runtrace(
+        thread_id,
+        runtrace_id=runtrace_id,
+        delivery_guard_epoch=3,
+    )
+
+    monkeypatch.setattr(
+        "app.feishu.services.get_feishu_bot_app_config_by_app_id",
+        lambda app_id: FeishuBotAppConfig(
+            employee_id="chief-of-staff",
+            app_id=app_id,
+            app_secret="secret",
+            display_name="OPC - Chief of Staff",
+        ),
+    )
+
+    result = service.send_text_message(
+        FeishuSendMessageRequest(
+            app_id="cli-chief-of-staff",
+            chat_id=f"oc_{suffix}",
+            text="这是一条 stale epoch 回复",
+            thread_ref=thread_id,
+            runtrace_ref=runtrace_id,
+            source_kind="auto_reply",
+            delivery_guard_epoch=2,
+        )
+    )
+
+    assert result.status == "dropped_stale"
+
+    issues_response = client.get("/api/v1/openclaw/gateway/issues")
+    assert issues_response.status_code == 200
+    issues = issues_response.json()
+    assert any(
+        issue["source"] == "feishu_delivery"
+        and issue["detail"] == "stale_epoch"
+        and issue["ref"] == result.outbound_ref
+        for issue in issues
+    )
+
+
 def test_openclaw_session_and_run_detail_endpoints() -> None:
     intake_response = client.post(
         "/api/v1/conversations/intake",
@@ -631,6 +692,56 @@ def test_openclaw_session_and_run_detail_endpoints() -> None:
     event_types = [event["event_type"] for event in run_response.json()["events"]]
     assert "agent_dialogue_generated" in event_types
     assert event_types[-1] == "visible_agent_handoff"
+
+
+def test_openclaw_session_detail_marks_stale_outbound_transcript_entries() -> None:
+    suffix = f"stale-session-view-{uuid4().hex[:8]}"
+    intake_response = client.post(
+        "/api/v1/conversations/intake",
+        json={
+            "surface": "feishu_dm",
+            "channel_id": f"feishu:dm:{suffix}",
+            "participant_ids": ["vincent", "feishu-chief-of-staff"],
+            "bound_agent_ids": ["chief-of-staff"],
+            "command": {"intent": "查看 stale outbound 观测"},
+        },
+    )
+    assert intake_response.status_code == 200
+    payload = intake_response.json()
+    thread_id = payload["thread"]["thread_id"]
+    runtrace_id = payload["command_result"]["run_trace"]["runtrace_id"]
+
+    get_feishu_surface_adapter_service()._outbound.save(
+        FeishuOutboundMessageRecord(
+            outbound_id=f"fo-stale-session-{suffix}",
+            app_id="cli-chief-of-staff",
+            receive_id_type="chat_id",
+            receive_id=f"oc_{suffix}",
+            text="这是一条被 stale guard 拦下的旧回复",
+            thread_ref=thread_id,
+            runtrace_ref=runtrace_id,
+            source_kind="auto_reply",
+            status="dropped_stale",
+            attempt_count=0,
+            delivery_guard_epoch=2,
+            stale_drop_reason="superseded_run",
+            dropped_as_stale=True,
+        )
+    )
+
+    session_response = client.get(f"/api/v1/openclaw/gateway/sessions/{thread_id}")
+
+    assert session_response.status_code == 200
+    transcript = session_response.json()["transcript"]
+    stale_entry = next(
+        entry
+        for entry in transcript
+        if entry["source"] == "feishu_outbound" and entry["text"] == "这是一条被 stale guard 拦下的旧回复"
+    )
+    assert stale_entry["status"] == "dropped_stale"
+    assert stale_entry["source_kind"] == "auto_reply"
+    assert stale_entry["dropped_as_stale"] is True
+    assert stale_entry["stale_drop_reason"] == "superseded_run"
 
 
 def test_openclaw_binding_and_hook_update_endpoints(tmp_path, monkeypatch) -> None:

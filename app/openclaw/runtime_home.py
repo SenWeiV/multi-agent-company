@@ -343,6 +343,10 @@ class OpenClawGatewayHealthService:
                     text=outbound.text,
                     created_at=outbound.created_at,
                     app_id=outbound.app_id,
+                    status=outbound.status,
+                    source_kind=outbound.source_kind,
+                    dropped_as_stale=outbound.dropped_as_stale,
+                    stale_drop_reason=outbound.stale_drop_reason,
                 )
             )
 
@@ -767,17 +771,29 @@ class OpenClawGatewayHealthService:
             )
 
         for outbound in get_feishu_surface_adapter_service().list_outbound_messages():
-            if outbound.status != "failed" or outbound.replayed_by_outbound_ref:
+            if outbound.replayed_by_outbound_ref:
                 continue
-            issues.append(
-                OpenClawOpsIssueView(
-                    source="feishu_delivery",
-                    severity="medium",
-                    title=f"Feishu outbound failed for {outbound.receive_id}",
-                    detail=outbound.error_detail or "unknown error",
-                    ref=outbound.outbound_id,
+            if outbound.status == "failed":
+                issues.append(
+                    OpenClawOpsIssueView(
+                        source="feishu_delivery",
+                        severity="medium",
+                        title=f"Feishu outbound failed for {outbound.receive_id}",
+                        detail=outbound.error_detail or "unknown error",
+                        ref=outbound.outbound_id,
+                    )
                 )
-            )
+                continue
+            if outbound.status == "dropped_stale":
+                issues.append(
+                    OpenClawOpsIssueView(
+                        source="feishu_delivery",
+                        severity="low",
+                        title=f"Feishu outbound dropped as stale for {outbound.receive_id}",
+                        detail=outbound.stale_drop_reason or "stale_reply_dropped",
+                        ref=outbound.outbound_id,
+                    )
+                )
 
         issues.sort(key=lambda item: item.created_at, reverse=True)
         return issues[:limit]
