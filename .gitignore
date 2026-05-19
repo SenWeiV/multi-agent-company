@@ -1,8 +1,11 @@
 .env
+.env.local
+.env.*.local
 .venv/
 .history/
 .runtime/
 .tmp/
+.claude/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
@@ -15,3 +18,5 @@ dist/
 .DS_Store
 data/
 minio/
+*.tar.gz
+*.zip

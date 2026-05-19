@@ -190,6 +190,10 @@ class OpenClawChatResult(BaseModel):
     turn_complete: bool = True
     turn_mode: str = "source"
     error_detail: str | None = None
+    phase_plan_raw: str | None = None
+    phase_complete: bool | None = None
+    discuss_with_target: str | None = None
+    discuss_with_reason: str | None = None
 
 
 class OpenClawHandoffContext(BaseModel):

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from dataclasses import dataclass
 from multiprocessing import Process
 
+from app.core.logging_config import setup_logging
 from app.feishu.config import get_feishu_bot_app_config_by_employee_id, get_feishu_bot_app_configs
 from app.feishu.services import feishu_sdk_event_to_payload, get_feishu_surface_adapter_service
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -29,6 +33,7 @@ def build_long_connection_bindings() -> list[FeishuLongConnectionBinding]:
 
 
 def run_long_connections(employee_ids: list[str] | None = None) -> None:
+    setup_logging()
     selected_ids = set(employee_ids or [])
     try:
         import lark_oapi as lark
@@ -43,9 +48,9 @@ def run_long_connections(employee_ids: list[str] | None = None) -> None:
     if not configs:
         raise RuntimeError("FEISHU_BOT_APPS_JSON 为空，无法启动 Feishu 长连接。")
 
-    print("Starting Feishu long connections...")
+    logger.info("Starting Feishu long connections...")
     for config in configs:
-        print(f" - {config.display_name or config.employee_id}: {config.app_id}")
+        logger.info(" - %s: %s", config.display_name or config.employee_id, config.app_id)
 
     if len(configs) == 1:
         _run_single_connection(configs[0].employee_id)
@@ -66,6 +71,7 @@ def run_long_connections(employee_ids: list[str] | None = None) -> None:
 
 
 def _run_single_connection(employee_id: str) -> None:
+    setup_logging()
     try:
         import lark_oapi as lark
     except ModuleNotFoundError as exc:
@@ -79,7 +85,10 @@ def _run_single_connection(employee_id: str) -> None:
     verification_token = config.verification_token or ""
     encrypt_key = config.encrypt_key or ""
 
+    logger.info("Long connection started for %s (app_id=%s)", employee_id, config.app_id)
+
     def on_message(event, app_id=config.app_id):
+        logger.info("Received message event for app_id=%s, employee_id=%s", app_id, employee_id)
         payload = feishu_sdk_event_to_payload(event)
         payload["header"] = {
             **(payload.get("header") or {}),

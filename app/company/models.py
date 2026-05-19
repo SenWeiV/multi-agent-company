@@ -89,6 +89,21 @@ class GoalLineage(BaseModel):
     execution_ref: str
 
 
+class CollaborationEdge(BaseModel):
+    from_employee: str
+    to_employee: str
+    relation_type: str
+    trigger_scenarios: list[str] = Field(default_factory=list)
+    description: str = ""
+
+
+class RoutingRule(BaseModel):
+    scenario: str
+    entry_point: str
+    typical_chain: list[str] = Field(default_factory=list)
+    description: str = ""
+
+
 class WorkTicket(BaseModel):
     ticket_id: str
     title: str

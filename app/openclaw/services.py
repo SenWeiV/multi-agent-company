@@ -10,7 +10,12 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from app.company.bootstrap import get_departments
+from app.company.bootstrap import (
+    COLLABORATION_EDGES,
+    ROUTING_RULES,
+    get_departments,
+    get_employees,
+)
 from app.company.models import WorkTicket
 from app.core.config import get_settings
 from app.feishu.config import get_feishu_bot_app_config_by_employee_id
@@ -309,7 +314,8 @@ class OpenClawWorkspaceCompiler:
                     "- `SOUL.md`\n"
                     "- `SKILLS.md`\n"
                     "- `TOOLS.md`\n"
-                    "- `HEARTBEAT.md`\n\n"
+                    "- `HEARTBEAT.md`\n"
+                    "- `COLLEAGUES.md`\n\n"
                     "When collaborating, keep all agent-to-agent exchanges visible to the CEO via Dashboard or mirrored room transcripts.\n"
                     "When you are the handoff target in a visible room, do not repeat the source agent's framing. Only add your role-specific contribution.\n"
                 ),
@@ -390,6 +396,10 @@ class OpenClawWorkspaceCompiler:
                     + "\n".join(f"- Handoff rule: {rule}" for rule in pack.memory_profile.handoff_rules[:4])
                 ),
             ),
+            OpenClawWorkspaceFile(
+                path="COLLEAGUES.md",
+                content=self._render_colleagues_md(employee_id, pack.department),
+            ),
         ]
         native_skill_files = [
             OpenClawWorkspaceFile(path=exported_file.path, content=exported_file.content)
@@ -459,6 +469,103 @@ class OpenClawWorkspaceCompiler:
             "feishu_bot_identity": config.bot_identity or f"feishu-{employee_id}",
             "feishu_bot_open_id": config.bot_open_id or "",
         }
+
+    def _render_colleagues_md(self, employee_id: str, department: str) -> str:
+        employees = get_employees()
+        departments = get_departments()
+
+        dept_by_name = {d.department_name: d for d in departments}
+        emp_by_id = {e.employee_id: e for e in employees}
+
+        upstream: list[str] = []
+        downstream: list[str] = []
+        peers: list[str] = []
+
+        for edge in COLLABORATION_EDGES:
+            if edge.from_employee == employee_id:
+                downstream.append(
+                    f"`{edge.to_employee}` ({edge.relation_type}) — {', '.join(edge.trigger_scenarios[:3])}"
+                )
+            if edge.to_employee == employee_id:
+                upstream.append(
+                    f"`{edge.from_employee}` ({edge.relation_type}) — {', '.join(edge.trigger_scenarios[:3])}"
+                )
+            if edge.relation_type == "collaborates_with":
+                if edge.from_employee == employee_id:
+                    peers.append(edge.to_employee)
+                elif edge.to_employee == employee_id:
+                    peers.append(edge.from_employee)
+
+        colleague_rows: list[str] = []
+        for emp in employees:
+            if emp.employee_id == employee_id:
+                continue
+            dept = dept_by_name.get(emp.department)
+            charter = dept.charter if dept else ""
+            scenarios: list[str] = []
+            for edge in COLLABORATION_EDGES:
+                if edge.from_employee == employee_id and edge.to_employee == emp.employee_id:
+                    scenarios.extend(edge.trigger_scenarios[:2])
+                elif edge.to_employee == employee_id and edge.from_employee == emp.employee_id:
+                    scenarios.extend(edge.trigger_scenarios[:2])
+            when = ", ".join(scenarios[:3]) if scenarios else "via Chief of Staff"
+            colleague_rows.append(
+                f"| `{emp.employee_id}` | {emp.employee_name} | {emp.department} | {charter} | {when} |"
+            )
+
+        routing_lines: list[str] = []
+        for rule in ROUTING_RULES:
+            if employee_id in rule.typical_chain:
+                routing_lines.append(f"- **{rule.scenario}**: {rule.description}")
+
+        always_on_depts = [d.department_name for d in departments if d.activation_level == "always_on"]
+
+        lines = [
+            "# Company Directory\n",
+            "## Organization Structure",
+            "- CEO (Human) → Chief of Staff (Executive Office)",
+            f"- Always-on departments: {', '.join(always_on_depts)}",
+            "",
+            "## Your Colleagues",
+            "| Employee ID | Name | Department | Charter | When to involve |",
+            "|---|---|---|---|---|",
+            *colleague_rows,
+            "",
+            "## Your Collaboration Paths",
+        ]
+
+        if upstream:
+            lines.append("**Upstream (who assigns tasks to you):**")
+            for item in upstream:
+                lines.append(f"- {item}")
+
+        if downstream:
+            lines.append("**Downstream (who you assign tasks to):**")
+            for item in downstream:
+                lines.append(f"- {item}")
+
+        if peers:
+            lines.append(f"**Peer collaboration:** {', '.join(f'`{p}`' for p in dict.fromkeys(peers))}")
+
+        if not upstream and not downstream and not peers:
+            lines.append("- Route through `chief-of-staff` for cross-department coordination.")
+
+        if routing_lines:
+            lines.append("")
+            lines.append("## Routing Rules (your involvement)")
+            lines.extend(routing_lines)
+
+        lines.append("")
+        lines.append("## Handoff Quick Reference")
+        lines.append("- 产品需求 → `product-lead`")
+        lines.append("- 技术方案 → `engineering-lead`")
+        lines.append("- 质量验收 → `quality-lead`")
+        lines.append("- 进度管理 → `delivery-lead`")
+        lines.append("- 市场调研 → `research-lead`")
+        lines.append("- 设计体验 → `design-lead`")
+        lines.append("- 跨部门/不确定 → `chief-of-staff`")
+
+        return "\n".join(lines) + "\n"
 
 
 class OpenClawProvisioningService:
@@ -845,6 +952,26 @@ class OpenClawGatewayAdapter:
             )
         messages.append({"role": "user", "content": user_message})
 
+        if get_settings().feishu_phase_discussion_enabled and turn_mode == "source":
+            messages.insert(-1, {
+                "role": "system",
+                "content": (
+                    "Phase discussion protocol:\n"
+                    "- 如果这个任务需要多个部门协作，请在回复末尾规划讨论阶段。\n"
+                    "- 格式：\n"
+                    "  PHASE_PLAN:\n"
+                    "  - phase: <phase-id> | lead: <employee-id> | with: <employee-id1>, <employee-id2> | max_turns: <n>\n"
+                    "  ... (2-4 个阶段)\n"
+                    "  END_PHASE_PLAN\n"
+                    "- 每个阶段指定一个 lead（该阶段主持人）和参与者（with）。\n"
+                    "- max_turns 表示该阶段最大讨论轮数（默认 10）。\n"
+                    "- lead 负责主持阶段讨论并在阶段结束时声明 PHASE_COMPLETE: yes。\n"
+                    "- 请在 PHASE_PLAN 的最后一个阶段规划一个总结阶段（summary），由你自己担任 lead，"
+                    "负责综合各阶段讨论成果，给出最终结论和下一步行动建议。\n"
+                    "- 规划好阶段后，仍然需要用 HANDOFF 指向第一个阶段的 lead。"
+                ),
+            })
+
         native_error_detail: str | None = None
         use_native_gateway = self._should_use_native_gateway() and self._config_service.is_core_employee(employee_id)
 
@@ -878,6 +1005,10 @@ class OpenClawGatewayAdapter:
                     handoff_reason=parsed_reply["handoff_reason"],
                     turn_complete=parsed_reply["turn_complete"],
                     turn_mode=turn_mode,
+                    phase_plan_raw=parsed_reply.get("phase_plan_raw"),
+                    phase_complete=parsed_reply.get("phase_complete"),
+                    discuss_with_target=parsed_reply.get("discuss_with_target"),
+                    discuss_with_reason=parsed_reply.get("discuss_with_reason"),
                 )
             except Exception as exc:
                 native_error_detail = f"{type(exc).__name__}: {exc}"
@@ -919,6 +1050,10 @@ class OpenClawGatewayAdapter:
                     turn_complete=parsed_reply["turn_complete"],
                     turn_mode=turn_mode,
                     error_detail=native_error_detail,
+                    phase_plan_raw=parsed_reply.get("phase_plan_raw"),
+                    phase_complete=parsed_reply.get("phase_complete"),
+                    discuss_with_target=parsed_reply.get("discuss_with_target"),
+                    discuss_with_reason=parsed_reply.get("discuss_with_reason"),
                 )
             except Exception as exc:
                 logger.exception(
@@ -938,6 +1073,7 @@ class OpenClawGatewayAdapter:
                         if native_error_detail
                         else f"{type(exc).__name__}: {exc}"
                     ),
+                    forced_handoff_targets=forced_handoff_targets,
                 )
 
         return self._fallback_reply(
@@ -947,6 +1083,7 @@ class OpenClawGatewayAdapter:
             strategy="openclaw_gateway_fallback",
             turn_mode=turn_mode,
             error_detail=native_error_detail,
+            forced_handoff_targets=forced_handoff_targets,
         )
 
     def infer_visible_handoff_targets(
@@ -1238,7 +1375,7 @@ class OpenClawGatewayAdapter:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=25) as response:
+            with urlopen(request, timeout=get_settings().openclaw_gateway_timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
@@ -1262,11 +1399,29 @@ class OpenClawGatewayAdapter:
         handoff_targets: list[str] = []
         handoff_reason: str | None = None
         turn_complete = True
+        phase_plan_raw: str | None = None
+        phase_complete: bool | None = None
+        discuss_with_target: str | None = None
+        discuss_with_reason: str | None = None
 
+        in_phase_plan_block = False
+        phase_plan_lines: list[str] = []
         cleaned_lines: list[str] = []
         for line in reply_text.splitlines():
             stripped = line.strip()
             upper = stripped.upper()
+
+            if upper == "PHASE_PLAN:":
+                in_phase_plan_block = True
+                phase_plan_lines.append(stripped)
+                continue
+            if in_phase_plan_block:
+                phase_plan_lines.append(stripped)
+                if upper == "END_PHASE_PLAN":
+                    in_phase_plan_block = False
+                    phase_plan_raw = "\n".join(phase_plan_lines)
+                continue
+
             if upper.startswith("HANDOFF:"):
                 payload = stripped.split(":", 1)[1].strip()
                 if payload and payload.lower() != "none":
@@ -1279,6 +1434,19 @@ class OpenClawGatewayAdapter:
                 payload = stripped.split(":", 1)[1].strip().lower()
                 turn_complete = payload not in {"no", "false", "0"}
                 continue
+            if upper.startswith("PHASE_COMPLETE:"):
+                payload = stripped.split(":", 1)[1].strip().lower()
+                phase_complete = payload in {"yes", "true", "1"}
+                continue
+            if upper.startswith("DISCUSS_WITH:"):
+                payload = stripped.split(":", 1)[1].strip()
+                if "|" in payload:
+                    target_part, _, reason_part = payload.partition("|")
+                    discuss_with_target = target_part.strip() or None
+                    discuss_with_reason = reason_part.strip() or None
+                else:
+                    discuss_with_target = payload.strip() or None
+                continue
             cleaned_lines.append(line)
 
         reply_text = "\n".join(cleaned_lines).strip() or raw_reply.strip()
@@ -1287,6 +1455,10 @@ class OpenClawGatewayAdapter:
             "handoff_targets": handoff_targets,
             "handoff_reason": handoff_reason,
             "turn_complete": turn_complete,
+            "phase_plan_raw": phase_plan_raw,
+            "phase_complete": phase_complete,
+            "discuss_with_target": discuss_with_target,
+            "discuss_with_reason": discuss_with_reason,
         }
 
     def _generate_follow_up_chain(
@@ -1470,13 +1642,21 @@ class OpenClawGatewayAdapter:
         strategy: str,
         turn_mode: str = "source",
         error_detail: str | None = None,
+        forced_handoff_targets: list[str] | None = None,
     ) -> OpenClawChatResult:
+        targets = forced_handoff_targets or []
         reply = (
             f"{agent_config.employee_name} 已收到。"
             f"基于 {agent_config.department} 视角，我建议先把这个需求收敛为一个可执行目标。"
             f"当前重点是：{user_message[:80]}。"
-            "如果需要，我会继续从本角色职责出发给出下一步建议。"
         )
+        if targets:
+            first_target = targets[0]
+            reply += f"\n\n请 {first_target} 先从你的专业角度分析一下这个需求，给出初步框架和建议。"
+            if len(targets) > 1:
+                reply += f"其他同事（{', '.join(targets[1:])}）也请准备各自的意见。"
+        else:
+            reply += "如果需要，我会继续从本角色职责出发给出下一步建议。"
         return OpenClawChatResult(
             employee_id=agent_config.employee_id,
             openclaw_agent_id=agent_config.openclaw_agent_id,
@@ -1486,6 +1666,7 @@ class OpenClawGatewayAdapter:
             session_key=session_key,
             turn_mode=turn_mode,
             error_detail=error_detail,
+            handoff_targets=forced_handoff_targets or [],
         )
 
 

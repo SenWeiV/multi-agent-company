@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from app.artifacts.services import get_artifact_store_service
-from app.company.bootstrap import get_employees
+from app.company.bootstrap import get_default_downstream_targets, get_employees
 from app.company.models import TriggerType
 from app.control_plane.models import RunEvent
 from app.control_plane.services import get_control_plane_service
@@ -44,6 +45,8 @@ from app.openclaw.models import OpenClawChatResult, OpenClawCollaborationContext
 from app.openclaw.services import get_openclaw_dialogue_service
 from app.persona.services import get_employee_pack_compiler
 from app.store import ModelStore, build_model_store
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -304,11 +307,28 @@ class FeishuSurfaceAdapterService:
                     ]
                 )
             )
+            canonical_primary_id = (
+                mentioned_agent_ids[0] if mentioned_agent_ids
+                else deterministic_name_target_ids[0] if deterministic_name_target_ids
+                else pending_handoff_dispatch_targets[0] if pending_handoff_dispatch_targets
+                else "chief-of-staff"
+            )
             dispatch_target_ids = self._ordered_group_dispatch_targets(
                 current_employee_id=binding.virtual_employee,
                 dispatch_target_ids=dispatch_target_ids,
                 pending_handoff=existing_thread.pending_handoff if existing_thread else None,
                 interruption_mode=bool(prior_active_runtrace_ref),
+            )
+            logger.info(
+                "[%s] Dispatch resolved: mentioned=%s, deterministic=%s, semantic=%s, "
+                "pending=%s → primary=%s, targets=%s",
+                binding.virtual_employee,
+                mentioned_agent_ids,
+                deterministic_name_target_ids,
+                semantic_dispatch_target_ids,
+                pending_handoff_dispatch_targets,
+                canonical_primary_id,
+                dispatch_target_ids,
             )
             deterministic_text_target_ids = [
                 target_employee_id
@@ -385,6 +405,36 @@ class FeishuSurfaceAdapterService:
                     dispatch_mode="non_targeted_group_message",
                     detail=f"Group message did not target {binding.virtual_employee}.",
                 )
+            if (
+                canonical_primary_id
+                and binding.virtual_employee != canonical_primary_id
+                and binding.virtual_employee in dispatch_target_ids
+            ):
+                self._record_group_debug_event(
+                    app_id=app_id,
+                    header=header,
+                    event=event,
+                    message_id=message_id,
+                    surface=surface,
+                    dispatch_mode="non_primary_skip",
+                    processed_status="skipped_non_primary",
+                    dispatch_targets=dispatch_target_ids,
+                    dispatch_resolution_basis=dispatch_resolution_basis,
+                    collaboration_intent=collaboration_intent,
+                    matched_employee_id=binding.virtual_employee,
+                    match_basis=match_basis,
+                    raw_mentions_summary=raw_mentions_summary,
+                    detail=f"Skipped: canonical primary is {canonical_primary_id}, not {binding.virtual_employee}.",
+                )
+                return FeishuWebhookResult(
+                    status="skipped",
+                    app_id=app_id,
+                    surface=surface,
+                    message_id=message_id,
+                    target_agent_ids=dispatch_target_ids,
+                    dispatch_mode="non_primary_skip",
+                    detail=f"Non-primary bot skipped. Primary: {canonical_primary_id}.",
+                )
         dispatch_result = FeishuMentionDispatchResult(
             app_id=app_id,
             chat_id=chat_id,
@@ -409,6 +459,14 @@ class FeishuSurfaceAdapterService:
                 ]
             )
         )
+        if not forced_handoff_targets and surface == ConversationSurface.FEISHU_GROUP:
+            forced_handoff_targets = get_default_downstream_targets(binding.virtual_employee)
+            if forced_handoff_targets:
+                logger.info(
+                    "forced_handoff_targets empty, using routing defaults for %s: %s",
+                    binding.virtual_employee,
+                    forced_handoff_targets,
+                )
         participant_ids = self._build_participants(event, binding.virtual_employee, dispatch_target_ids)
         activation_hint_targets = list(
             dict.fromkeys(
@@ -648,8 +706,16 @@ class FeishuSurfaceAdapterService:
             handoff_name_contract_violation = False
             handoff_origin: str | None = None
             source_reply_text_for_handoff = ""
+            source_phase_plan_raw: str | None = None
             source_handoff_reason: str | None = None
             source_structured_handoff_targets: list[str] = []
+            logger.info(
+                "[%s] Source turn starting: defer=%s, forced_handoff=%s, phase_enabled=%s",
+                binding.virtual_employee,
+                defer_source_turn,
+                forced_handoff_targets,
+                get_settings().feishu_phase_discussion_enabled,
+            )
             if defer_source_turn:
                 source_handoff_reason = (
                     (
@@ -854,10 +920,19 @@ class FeishuSurfaceAdapterService:
                         break
 
                 source_reply_text_for_handoff = dialogue_result.reply_text
+                source_phase_plan_raw = dialogue_result.phase_plan_raw
                 source_handoff_reason = dialogue_result.handoff_reason
                 source_structured_handoff_targets = list(dialogue_result.handoff_targets)
 
-            if surface == ConversationSurface.FEISHU_GROUP and final_handoff_targets:
+            phase_plan_available = get_settings().feishu_phase_discussion_enabled and source_phase_plan_raw
+            logger.info(
+                "[%s] Orchestration gate: handoff_targets=%s, phase_plan=%s, entering=%s",
+                binding.virtual_employee,
+                final_handoff_targets,
+                "present" if source_phase_plan_raw else "absent",
+                "phase_discussion" if phase_plan_available else "sequential_handoff" if final_handoff_targets else "none",
+            )
+            if surface == ConversationSurface.FEISHU_GROUP and (final_handoff_targets or phase_plan_available):
                 handoff_result = self._orchestrate_visible_handoffs(
                     source_employee_id=binding.virtual_employee,
                     handoff_targets=final_handoff_targets,
@@ -874,6 +949,7 @@ class FeishuSurfaceAdapterService:
                     channel_id=channel_id,
                     user_message=normalized_intent,
                     source_reply_text=source_reply_text_for_handoff,
+                    source_phase_plan_raw=source_phase_plan_raw,
                     event=event,
                     intake_result_thread_id=intake_result.thread.thread_id,
                     work_ticket_ref=intake_result.command_result.work_ticket.ticket_id,
@@ -1412,6 +1488,7 @@ class FeishuSurfaceAdapterService:
         channel_id: str,
         user_message: str,
         source_reply_text: str,
+        source_phase_plan_raw: str | None,
         event: dict[str, Any],
         intake_result_thread_id: str,
         work_ticket_ref: str,
@@ -1460,6 +1537,126 @@ class FeishuSurfaceAdapterService:
         handoff_turn_index = 0
         stop_reason: str | None = None
         stopped_by_turn_limit = False
+
+        if get_settings().feishu_phase_discussion_enabled and source_reply_text:
+            from app.orchestration.plan_parser import parse_phase_plan
+            from app.orchestration.phase_orchestrator import PhaseOrchestrator
+
+            logger.info(
+                "Phase discussion enabled — attempting plan detection (source=%s, phase_plan_raw=%s)",
+                source_employee_id,
+                "present" if source_phase_plan_raw else "absent",
+            )
+
+            all_employee_ids = {e.employee_id for e in get_employees()}
+            plan_source = source_phase_plan_raw or source_reply_text
+            plan = parse_phase_plan(plan_source, valid_employee_ids=all_employee_ids)
+            logger.info("Phase plan parse result: %s", "found" if plan else "not found")
+
+            if plan is None and get_settings().feishu_phase_plan_retry_enabled:
+                logger.info("No PHASE_PLAN found, triggering retry for %s", source_employee_id)
+                try:
+                    retry_result = dialogue_service.generate_reply(
+                        employee_id=source_employee_id,
+                        user_message=(
+                            "你的回复很好，但缺少讨论阶段规划。请基于你的分析，追加一个 PHASE_PLAN 块来组织后续的跨部门讨论。\n"
+                            "格式：\n"
+                            "PHASE_PLAN:\n"
+                            "- phase: <phase-id> | lead: <employee-id> | with: <employee-id1>, <employee-id2> | max_turns: <n>\n"
+                            "... (2-4 个阶段)\n"
+                            "END_PHASE_PLAN\n"
+                            "请根据你对任务的理解，规划 2-4 个讨论阶段，每个阶段指定一个 lead 和参与者。"
+                        ),
+                        work_ticket=get_control_plane_service().get_required_work_ticket(work_ticket_ref),
+                        channel_id=channel_id,
+                        surface=surface.value,
+                        app_id=app_id,
+                        visible_participants=visible_participants,
+                        conversation_history=None,
+                        turn_mode="phase_plan_retry",
+                    )
+                    retry_plan_source = retry_result.phase_plan_raw or retry_result.reply_text
+                    plan = parse_phase_plan(retry_plan_source, valid_employee_ids=all_employee_ids)
+                    logger.info("Phase plan retry result: %s", "found" if plan else "not found")
+                    get_control_plane_service().append_run_trace_event(
+                        runtrace_ref,
+                        RunEvent(
+                            event_type="phase_plan_retry",
+                            message=f"Retried {source_employee_id} for PHASE_PLAN: {'success' if plan else 'failed'}",
+                            metadata={"source_employee_id": source_employee_id},
+                        ),
+                    )
+                except Exception:
+                    logger.exception("Phase plan retry failed for %s", source_employee_id)
+
+            if plan is not None:
+                logger.info(
+                    "PhaseOrchestrator starting with %d phases, global_turn_limit=%d",
+                    len(plan.phases), limit,
+                )
+                def _phase_generate_reply(*, employee_id: str, phase_context: str, **kwargs: Any) -> OpenClawChatResult:
+                    target_config = get_feishu_bot_app_config_by_employee_id(employee_id)
+                    return dialogue_service.generate_reply(
+                        employee_id=employee_id,
+                        user_message=user_message,
+                        work_ticket=get_control_plane_service().get_required_work_ticket(work_ticket_ref),
+                        channel_id=channel_id,
+                        surface=surface.value,
+                        app_id=target_config.app_id if target_config else app_id,
+                        visible_participants=visible_participants,
+                        conversation_history=phase_context,
+                        turn_mode="phase_discussion",
+                    )
+
+                def _phase_send_message(*, employee_id: str, text: str) -> FeishuSendMessageResult:
+                    target_config = get_feishu_bot_app_config_by_employee_id(employee_id)
+                    if target_config is None:
+                        return FeishuSendMessageResult(status="error", error_detail=f"No config for {employee_id}")
+                    return self.send_text_message(
+                        FeishuSendMessageRequest(
+                            app_id=target_config.app_id,
+                            chat_id=chat_id,
+                            text=text,
+                            work_ticket_ref=work_ticket_ref,
+                            thread_ref=intake_result_thread_id,
+                            runtrace_ref=runtrace_ref,
+                            delivery_guard_epoch=delivery_guard_epoch,
+                            source_kind="phase_discussion_reply",
+                        )
+                    )
+
+                def _phase_emit_trace_event(
+                    event_type: str, message: str, metadata: dict[str, str] | None = None,
+                ) -> None:
+                    get_control_plane_service().append_run_trace_event(
+                        runtrace_ref,
+                        RunEvent(
+                            event_type=event_type,
+                            message=message,
+                            metadata=metadata or {},
+                        ),
+                    )
+
+                orchestrator = PhaseOrchestrator(
+                    plan=plan,
+                    global_turn_limit=limit,
+                    initial_visible_turn_count=visible_turn_count,
+                    generate_reply_fn=_phase_generate_reply,
+                    send_message_fn=_phase_send_message,
+                    source_reply_text=source_reply_text,
+                    valid_employee_ids=all_employee_ids,
+                    source_employee_id=source_employee_id,
+                    emit_trace_event=_phase_emit_trace_event,
+                )
+                phase_result = orchestrator.run()
+                logger.info(
+                    "PhaseOrchestrator finished: reply_count=%d, errors=%d",
+                    phase_result.get("reply_count", 0), len(phase_result.get("reply_errors", [])),
+                )
+                return phase_result
+
+        if get_settings().feishu_phase_discussion_enabled:
+            logger.info("Phase discussion fallback to sequential handoff queue")
 
         while pending_handoffs:
             if visible_turn_count >= limit:
@@ -2395,11 +2592,6 @@ class FeishuSurfaceAdapterService:
             return []
 
         if not interruption_mode:
-            if current_employee_id in ordered_targets:
-                return [
-                    current_employee_id,
-                    *[employee_id for employee_id in ordered_targets if employee_id != current_employee_id],
-                ]
             return ordered_targets
 
         priority_targets: list[str] = []
@@ -3153,6 +3345,12 @@ class FeishuSurfaceAdapterService:
                 ],
             )
         final_handoff_targets = list(dict.fromkeys(reply_name_targets))
+        if not final_handoff_targets and forced_handoff_targets:
+            logger.info(
+                "final_handoff_targets empty, falling back to forced_handoff_targets: %s",
+                forced_handoff_targets,
+            )
+            final_handoff_targets = list(dict.fromkeys(forced_handoff_targets))
         naming_contract_violation = self._is_named_handoff_contract_violation(
             reply_text=reply_text,
             final_handoff_targets=final_handoff_targets,

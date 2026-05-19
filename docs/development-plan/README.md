@@ -62,16 +62,17 @@
 
 ### 当前正式路线
 
-- `V1.5`
-  只围绕核心 7 个 bot、Feishu、OpenClaw、native skills、Dashboard `Agents` 模块、消息卡审批、`Launch / Ops / Support Room`、repeat recall 封板。
-- `V1.8`
-  只引入 `Pulse / Trigger Engine`、`Relationship Graph`、`Skill Creator + Eval Loop`、`CEO Visible Event Stream`、memory promotion / policy guard。
+- `V1.5`（开发完成，跳过正式签收直接进入 V1.8）
+  核心 7 个 bot、Feishu、OpenClaw、native skills、Dashboard `Agents` 模块、群聊接棒、repeat recall 已完成。
+  遗留项（dead letters 清理）合入 V1.8。
+- `V1.8`（统一演进版本）
+  合并原 V1.8 四模块 + 原 V2 四方向 + V1.5 遗留项的统一版本。
+  覆盖：WorkTicket 状态机、结构化通信、停止规则引擎、三层关系建模、统一 Skill 库、Pulse/Trigger Engine、CEO Event Stream、Surface-Agnostic Orchestrator、治理层增强。
+- `V2`（缩减范围）
+  只保留：Slack 接入、L2 department promotion、Quality 双席位拆分、多租户 / org template。
 - 当前明确排除：
   `Company Plaza`
   `Growth / Support` 独立 bot
-  `Slack`
-  `L2 department promotion`
-  `Quality` 双席位拆分
 
 - [V1 具体实现开发方案](./v1-execution-plan.md)
   V1 的开发主入口。说明目标、范围、优先级、交付顺序、风险与非目标。
@@ -79,8 +80,8 @@
   说明系统模块、内部适配层、关键对象、依赖关系、数据流和实现边界。
 - [开发路线图与周迭代计划](./roadmap-and-iteration-plan.md)
   固化 Week 1-8 的开发安排，以及 `V1.5 / V1.8 / V2` 的后续路径。
-- [V1.8 Enhancement Roadmap](./v1.8-enhancement-roadmap.md)
-  固化去掉 `Company Plaza` 后的 `V1.8` 目标、最小能力、依赖关系与非目标。
+- [V1.8 统一演进路线](./v1.8-enhancement-roadmap.md)
+  V1.8 统一演进 Roadmap，合并原 V1.8 四模块 + V2 四方向 + V1.5 遗留项，按 P0-P4 优先级排序。
 - [验收标准与测试场景](./acceptance-and-test-scenarios.md)
   收敛正式验收场景、质量门、memory scope、checkpoint/rollback 和公开库边界检查。
 - [前端 Dashboard 与飞书交互方案](./frontend-and-feishu-interaction-design.md)
@@ -146,6 +147,6 @@
 - `LangGraph` 只进入 company workflow orchestration，不替代单 agent runtime。
 - 当前 `Memory Fabric` 仍是长期治理真相源。
 - `Chief of Staff`、`VirtualDepartment`、`Memory Fabric`、`ApprovalGate` 仍由本项目定义。
-- `V1.5 = Feishu + OpenClaw + native skills + Dashboard Agents`
-- `V1.8 = trigger / relationship / controlled self-evolution / visible event stream`
-- `V2 = Slack`
+- `V1.5 = Feishu + OpenClaw + native skills + Dashboard Agents`（开发完成）
+- `V1.8 = 统一演进版本：状态机 + 结构化通信 + 停止规则 + 关系建模 + Skill 库 + Trigger + Event Stream + Orchestrator + 治理层`
+- `V2 = Slack + L2 promotion + Quality 拆分 + 多租户`

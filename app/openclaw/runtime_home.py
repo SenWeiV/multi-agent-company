@@ -166,7 +166,7 @@ class OpenClawRuntimeHomeMaterializer:
         defaults = {
             "bootstrap-extra-files": {
                 "enabled": True,
-                "paths": ["AGENTS.md", "IDENTITY.md", "SOUL.md", "SKILLS.md", "TOOLS.md", "HEARTBEAT.md", "USER.md"],
+                "paths": ["AGENTS.md", "IDENTITY.md", "SOUL.md", "SKILLS.md", "TOOLS.md", "HEARTBEAT.md", "USER.md", "COLLEAGUES.md"],
             },
             "command-logger": {
                 "enabled": True,

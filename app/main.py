@@ -5,7 +5,10 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core.config import get_settings
+from app.core.logging_config import setup_logging
 from app.ui.router import router as ui_router
+
+setup_logging()
 
 settings = get_settings()
 STATIC_DIR = Path(__file__).resolve().parent / "ui" / "static"

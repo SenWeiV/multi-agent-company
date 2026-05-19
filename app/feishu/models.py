@@ -57,7 +57,7 @@ class FeishuInboundEventRecord(BaseModel):
 
 
 class FeishuWebhookResult(BaseModel):
-    status: Literal["challenge", "processed", "duplicate", "ignored"]
+    status: Literal["challenge", "processed", "duplicate", "ignored", "skipped"]
     app_id: str | None = None
     surface: ConversationSurface | None = None
     message_id: str | None = None

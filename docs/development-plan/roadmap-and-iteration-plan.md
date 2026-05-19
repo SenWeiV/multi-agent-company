@@ -18,35 +18,37 @@
 
 ### V1.5
 
-目标：
+目标（开发完成，跳过正式签收）：
 
 - Core-7 OpenClaw 对齐
 - `AGENTS.md / SKILLS.md` 进入 bootstrap
 - per-agent native skills 正式化
 - 新增 Dashboard `Agents` 模块
 - 完成 repeat recall 语义召回
-- 完成 Feishu card approval
-- 固化 `Launch / Ops / Support Room`
+- 完成群聊接棒（visible handoff orchestration）
 
 ### V1.8
 
-目标：
+目标（统一演进版本）：
 
-- 引入 `Pulse / Trigger Engine`
-- 引入 `Relationship Graph`
-- 引入 `Skill Creator + Eval Loop`
-- 引入 `CEO Visible Event Stream`
-- 引入 memory promotion / policy guard / quotas
+- WorkTicket 状态机 + Dead letters 清理
+- 结构化 agent 回复（JSON 尾部块）
+- 停止规则引擎（三信号融合）
+- 三层关系建模（组织图 + 信息流 + 非正式网络）
+- 统一 Skill 库（company/department/employee 三层）
+- Pulse / Trigger Engine
+- CEO Visible Event Stream
+- Surface-Agnostic Orchestrator
+- Memory promotion / policy guard / quotas
 
 ### V2
 
-目标：
+目标（缩减范围）：
 
-- 开放 `L2 department promotion`
-- 加强 `department_shared procedural memory`
-- 拆分高负载复合席位，优先拆 `Quality`
-- 引入 `company template / org template / employee pack bundle`
 - 新增 `Slack` 作为第二沟通平台
+- 开放 `L2 department promotion`
+- Quality 双席位拆分
+- 多租户 / org template
 
 ## 2. Week 1-8 计划
 
@@ -309,37 +311,35 @@
 
 ### V1.5
 
+（开发完成，跳过正式签收直接进入 V1.8）
+
 - Core-7 OpenClaw 与 Dashboard 完全对齐
 - `AGENTS.md / SKILLS.md` 进入 runtime bootstrap
 - 每个核心 bot 具备 workspace-local native skills
 - Dashboard 新增 `Agents` 模块
 - repeat recall 语义召回进入正式能力
-- Feishu 消息卡审批闭环
-- `Launch / Ops / Support Room` 进入正式模板
-- 当前明确排除：
-  `Company Plaza`
-  `Growth / Support` 独立 bot
+- 群聊接棒（visible handoff orchestration）
+- 遗留项（dead letters 清理）已合入 V1.8
 
 ### V1.8
 
-- 新增 `Pulse / Trigger Engine`
-- 新增 `Relationship Graph`
-- 新增 `Skill Creator + Eval Loop`
-- 新增 `CEO Visible Event Stream`
-- 增强 memory promotion、policy guard、quota 与 trigger 治理
-- 保持 `Company Plaza not in scope`
+（统一演进版本，合并原 V1.8 + V2 内容）
+
+- P0：WorkTicket 状态机 + Dead letters 清理
+- P1：结构化 agent 回复 + 停止规则引擎 Phase 1-2
+- P2：正式组织图层 + 统一 Skill 库 + Pulse / Trigger Engine
+- P3：轻量熵信号 + 信息流图层 + CEO Event Stream + Surface-Agnostic Orchestrator + Memory/Policy/Quotas
+- P4：三信号融合 + 非正式网络 + Skill Eval Loop + Agent Capability Card
+- 详见 [V1.8 统一演进路线](./v1.8-enhancement-roadmap.md)
 
 ### V2
 
+（缩减范围）
+
+- 新增 `Slack` 作为第二沟通平台
 - 开放 `L2 department promotion`
-- 强化 procedural memory
 - 把 `Quality Lead` 从单席位双模式拆成双员工
-- 新增 `SlackSurfaceAdapter`
-- 让 `Slack` 成为第二沟通平台
-- 加强公司 cadence：
-  `daily sync`
-  `weekly review`
-  `monthly checkpoint`
+- 引入多租户 / org template
 
 ## 6. V1.5 / V1.8 开发阶段
 

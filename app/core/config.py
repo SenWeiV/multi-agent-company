@@ -31,11 +31,16 @@ class Settings(BaseSettings):
     openclaw_gateway_base_url: str = "http://openclaw-gateway:18789"
     openclaw_gateway_token: str = ""
     openclaw_gateway_api_key: str = ""
-    openclaw_gateway_timeout_seconds: int = 25
+    openclaw_gateway_timeout_seconds: int = 90
     openclaw_runtime_home: str = ".runtime/openclaw/home"
     openclaw_gateway_host_port: int = 18789
     openclaw_visible_follow_up_limit: int = 3
     openclaw_control_ui_auto_pair_local: bool = True
+
+    feishu_phase_discussion_enabled: bool = True
+    feishu_phase_max_turns_per_phase: int = 10
+    feishu_phase_max_phases: int = 5
+    feishu_phase_plan_retry_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",

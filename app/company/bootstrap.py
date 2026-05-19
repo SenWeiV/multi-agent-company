@@ -2,8 +2,10 @@ from app.company.models import (
     ActivationLevel,
     BudgetPolicy,
     BudgetScope,
+    CollaborationEdge,
     CompanyProfile,
     DepartmentSeatMapEntry,
+    RoutingRule,
     TriggerPolicy,
     TriggerType,
     VirtualDepartment,
@@ -354,6 +356,160 @@ SEAT_MAP = [
 ]
 
 
+COLLABORATION_EDGES = [
+    CollaborationEdge(
+        from_employee="chief-of-staff",
+        to_employee="product-lead",
+        relation_type="delegates_to",
+        trigger_scenarios=["产品方向讨论", "需求梳理", "优先级判断", "版本规划"],
+        description="Chief of Staff 将产品方向类任务委派给 Product Lead。",
+    ),
+    CollaborationEdge(
+        from_employee="chief-of-staff",
+        to_employee="research-lead",
+        relation_type="delegates_to",
+        trigger_scenarios=["市场调研", "竞品分析", "趋势洞察", "用户研究"],
+        description="Chief of Staff 将调研类任务委派给 Research Lead。",
+    ),
+    CollaborationEdge(
+        from_employee="chief-of-staff",
+        to_employee="delivery-lead",
+        relation_type="delegates_to",
+        trigger_scenarios=["任务排期", "进度跟踪", "依赖管理", "里程碑规划"],
+        description="Chief of Staff 将项目管理类任务委派给 Delivery Lead。",
+    ),
+    CollaborationEdge(
+        from_employee="chief-of-staff",
+        to_employee="engineering-lead",
+        relation_type="delegates_to",
+        trigger_scenarios=["技术架构设计", "系统故障排查", "技术选型"],
+        description="Chief of Staff 将纯技术类任务直接委派给 Engineering Lead。",
+    ),
+    CollaborationEdge(
+        from_employee="chief-of-staff",
+        to_employee="design-lead",
+        relation_type="delegates_to",
+        trigger_scenarios=["UX 体验问题", "交互方案设计"],
+        description="Chief of Staff 将设计类任务委派给 Design Lead。",
+    ),
+    CollaborationEdge(
+        from_employee="chief-of-staff",
+        to_employee="quality-lead",
+        relation_type="delegates_to",
+        trigger_scenarios=["质量验收", "GO/NO-GO 决策"],
+        description="Chief of Staff 将验收类任务委派给 Quality Lead。",
+    ),
+    CollaborationEdge(
+        from_employee="product-lead",
+        to_employee="design-lead",
+        relation_type="collaborates_with",
+        trigger_scenarios=["UX 需求细化", "交互原型评审", "用户体验优化"],
+        description="Product Lead 与 Design Lead 就用户体验和交互方案协作。",
+    ),
+    CollaborationEdge(
+        from_employee="product-lead",
+        to_employee="engineering-lead",
+        relation_type="collaborates_with",
+        trigger_scenarios=["技术可行性评估", "实现方案讨论", "API 设计"],
+        description="Product Lead 与 Engineering Lead 就技术实现方案协作。",
+    ),
+    CollaborationEdge(
+        from_employee="product-lead",
+        to_employee="research-lead",
+        relation_type="collaborates_with",
+        trigger_scenarios=["市场信号验证", "竞品对标", "用户需求挖掘"],
+        description="Product Lead 与 Research Lead 就市场和用户洞察协作。",
+    ),
+    CollaborationEdge(
+        from_employee="engineering-lead",
+        to_employee="quality-lead",
+        relation_type="delegates_to",
+        trigger_scenarios=["代码提交验收", "测试策略确认", "质量回归"],
+        description="Engineering Lead 将实现完成的功能交给 Quality Lead 验收。",
+    ),
+    CollaborationEdge(
+        from_employee="engineering-lead",
+        to_employee="design-lead",
+        relation_type="collaborates_with",
+        trigger_scenarios=["前端实现对齐", "交互细节确认"],
+        description="Engineering Lead 与 Design Lead 就前端实现细节协作。",
+    ),
+    CollaborationEdge(
+        from_employee="delivery-lead",
+        to_employee="engineering-lead",
+        relation_type="collaborates_with",
+        trigger_scenarios=["排期对齐", "技术风险评估", "依赖解耦"],
+        description="Delivery Lead 与 Engineering Lead 就排期和技术依赖协作。",
+    ),
+    CollaborationEdge(
+        from_employee="delivery-lead",
+        to_employee="product-lead",
+        relation_type="collaborates_with",
+        trigger_scenarios=["范围变更评审", "优先级调整"],
+        description="Delivery Lead 与 Product Lead 就范围和优先级对齐。",
+    ),
+    CollaborationEdge(
+        from_employee="quality-lead",
+        to_employee="chief-of-staff",
+        relation_type="escalates_to",
+        trigger_scenarios=["GO/NO-GO verdict", "严重质量问题上报"],
+        description="Quality Lead 将最终验收结果上报给 Chief of Staff。",
+    ),
+    CollaborationEdge(
+        from_employee="research-lead",
+        to_employee="product-lead",
+        relation_type="collaborates_with",
+        trigger_scenarios=["调研结论交付", "竞品分析报告", "趋势洞察同步"],
+        description="Research Lead 将调研成果同步给 Product Lead 作为决策输入。",
+    ),
+]
+
+ROUTING_RULES = [
+    RoutingRule(
+        scenario="新需求/新项目",
+        entry_point="chief-of-staff",
+        typical_chain=["chief-of-staff", "product-lead", "design-lead", "engineering-lead", "quality-lead", "chief-of-staff"],
+        description="Chief of Staff 做 intake framing，Product Lead 定义范围，Design + Engineering 并行，Quality 验收，Chief of Staff 收口。",
+    ),
+    RoutingRule(
+        scenario="技术架构/系统问题",
+        entry_point="chief-of-staff",
+        typical_chain=["chief-of-staff", "engineering-lead", "quality-lead"],
+        description="纯技术问题直接交 Engineering Lead，完成后 Quality Lead 验证。",
+    ),
+    RoutingRule(
+        scenario="评测/评估流程设计",
+        entry_point="chief-of-staff",
+        typical_chain=["chief-of-staff", "product-lead", "research-lead", "engineering-lead", "quality-lead", "delivery-lead"],
+        description="Product 定范围 → Research 定方法论 → Engineering 架构 → Quality 自动化 → Delivery 排期。",
+    ),
+    RoutingRule(
+        scenario="市场调研/竞品分析",
+        entry_point="chief-of-staff",
+        typical_chain=["chief-of-staff", "research-lead", "product-lead"],
+        description="Research Lead 调研，结论交 Product Lead 决策。",
+    ),
+    RoutingRule(
+        scenario="用户体验优化",
+        entry_point="chief-of-staff",
+        typical_chain=["chief-of-staff", "product-lead", "design-lead", "engineering-lead"],
+        description="Product 提需求，Design 出方案，Engineering 实现。",
+    ),
+    RoutingRule(
+        scenario="进度跟踪/排期调整",
+        entry_point="chief-of-staff",
+        typical_chain=["chief-of-staff", "delivery-lead", "engineering-lead"],
+        description="Delivery Lead 主导排期，与 Engineering 对齐。",
+    ),
+    RoutingRule(
+        scenario="质量验收/发布决策",
+        entry_point="chief-of-staff",
+        typical_chain=["chief-of-staff", "quality-lead", "chief-of-staff"],
+        description="Quality Lead 给出 GO/NO-GO verdict，Chief of Staff 做最终决策。",
+    ),
+]
+
+
 def get_company_profile() -> CompanyProfile:
     return COMPANY_PROFILE
 
@@ -368,3 +524,13 @@ def get_employees() -> list[VirtualEmployee]:
 
 def get_seat_map() -> list[DepartmentSeatMapEntry]:
     return SEAT_MAP
+
+
+def get_default_downstream_targets(employee_id: str) -> list[str]:
+    return list(
+        dict.fromkeys(
+            edge.to_employee
+            for edge in COLLABORATION_EDGES
+            if edge.from_employee == employee_id and edge.relation_type == "delegates_to"
+        )
+    )
