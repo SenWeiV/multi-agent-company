@@ -1,99 +1,211 @@
-# Multi-Agent Company
+# OPC — One-Person Company
 
-A multi-agent orchestration platform that simulates a fully-staffed virtual company. Seven AI agents with distinct roles collaborate autonomously through structured discussions in Feishu (Lark) group chats, powered by LLM backends and the OpenClaw agent runtime.
+> A multi-agent system that models real companies — where AI agents communicate **peer-to-peer through enterprise IM (Feishu/Lark)** based on explicit organizational relationships, and discussions are **structured by LLM-planned phases** with deterministic orchestration.
 
-## Architecture
+**Status:** V1.8 · Phase Discussion + Primary Dispatcher Election · Running in production
+
+---
+
+## 🎯 What is OPC?
+
+Most multi-agent frameworks today fall into one of two camps:
+
+1. **Top-down task delivery** (CrewAI, AutoGen) — a manager agent assigns tasks to workers; communication flows along a fixed delegation tree.
+2. **Hard-coded pipelines** (ChatDev, MetaGPT) — agents pass artifacts through a predefined sequence of roles (CEO → CTO → Programmer → Tester).
+
+Both work for *getting one task done*. Neither captures how real companies actually operate — where **marketing negotiates with engineering**, where **a junior PM pings a senior researcher across reporting lines**, and where **discussions converge naturally** when everyone agrees, not when a token budget runs out.
+
+OPC explores a third path:
+
+> Agents communicate **through the same IM channel humans use**, autonomously choose collaborators via **relationship-aware routing**, and discussions are structured by **LLM-planned phases with deterministic execution**.
+
+---
+
+## 🚀 Core Innovations
+
+### 1. Relationship Module as a First-Class Citizen
+
+Most frameworks model the org chart as a single reporting tree. OPC defines **four distinct relationship types**, each affecting routing differently:
+
+| Relationship   | Example                       | Affects                                |
+| -------------- | ----------------------------- | -------------------------------------- |
+| **Reporting**  | CTO → Engineer                | Authority, approvals                   |
+| **Collaboration** | PM ↔ Designer              | Day-to-day cross-functional work       |
+| **Information** | Dev → Security (CC)          | Broadcast / awareness only             |
+| **Informal**   | Engineer ↔ Engineer (off-team) | Off-the-record consultation            |
+
+The relationship graph is **declarative** (YAML / JSON), **versionable** (lives next to your code), and **renderable** as a visual org chart.
+
+### 2. Autonomous Communication Routing
+
+In existing frameworks, a **central coordinator** decides who talks next:
+
+- AutoGen GroupChat → a `selector` LLM picks the next speaker
+- CrewAI Hierarchical → the `manager` agent assigns tasks
+- ChatDev → the chat chain is predefined at design time
+
+In OPC, **each agent decides for itself**: *"I need budget approval — that's a reporting-line escalation to Finance"* or *"I need design input — that's a collaboration-line request to the Design team."* Routing decisions are made **locally**, based on the agent's current context and the relationship graph.
+
+### 3. Horizontal & Bi-directional Conversation
+
+Real cross-department communication is **multi-turn, bi-directional, and converges through discussion** — not one-shot artifact handoff.
+
+- MacNet uses DAGs → no cycles, no back-and-forth
+- ChatDev's chat chain → strictly sequential
+- Paperclip → ticket-based async, no real-time discussion
+
+OPC explicitly supports **departmental dialogues that loop until alignment** — much like an actual meeting.
+
+### 4. Semantic Stop Rules
+
+When does a conversation end? Most systems use crude heuristics:
+
+- `max_rounds = N` (AutoGen, CrewAI)
+- `budget = $X` (Paperclip)
+- "Manager says done" (hierarchical patterns)
+
+OPC explores **stopping when the discussion itself has converged**:
+
+- **Semantic consistency** — agent positions stabilize across rounds
+- **Information saturation** — new turns add little novel content
+- **Consensus signaling** — agents explicitly declare alignment
+- **Decision crystallization** — an actionable conclusion has emerged
+
+---
+
+## 📊 How OPC Differs From Existing Frameworks
+
+| Dimension | CrewAI | AutoGen | ChatDev 2.0 | MacNet | IoA | **OPC** |
+|-----------|--------|---------|-------------|--------|-----|---------|
+| **Positioning** | Task orchestration | Multi-agent chat | Software dev | Research artifact | A2A protocol | **Org collaboration simulation** |
+| **Communication** | In-memory, top-down | In-memory, group | In-memory, chain | DAG (one-way) | P2P protocol | **Enterprise IM (observable)** |
+| **Routing** | Manager-assigned | Selector LLM | Predefined chain | Topology traversal | Capability match | **Relationship-aware + LLM-planned** |
+| **Orchestration** | Sequential/hierarchical | Round-robin/selector | Fixed pipeline | DAG execution | Task-based | **Phase-structured (dynamic plan)** |
+| **Stop condition** | `max_iter` | `max_rounds` | Flow end | DAG terminus | Task complete | **Phase completion + epoch guard** |
+| **Human intervention** | Config required | Config required | Not supported | Not supported | Not supported | **Native (@mention)** |
+| **Observability** | Dashboard | Print/log | Terminal | Log | Log | **Same IM channel (zero-cost)** |
+
+---
+
+## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Feishu Group Chat                            │
-│  User @Chief-of-Staff → structured multi-agent discussion       │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ WebSocket (Long Connection × 7 bots)
-┌────────────────────────────▼────────────────────────────────────┐
-│              feishu-long-conn (7 processes)                      │
-│  Dispatch routing → Primary election → Source turn              │
-└────────────────────────────┬────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Feishu Group Chat                                │
+│  User @Agent → structured multi-agent Phase Discussion              │
+│  All agent replies visible in real-time                             │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │ WebSocket Long Connection × 7 bots
+┌────────────────────────────▼────────────────────────────────────────┐
+│              feishu-long-conn (7 independent processes)              │
+│                                                                     │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────────┐ │
+│  │ Fan-out     │→ │ Primary      │→ │ Source Turn / Orchestration │ │
+│  │ (all bots   │  │ Election     │  │ (only primary executes)    │ │
+│  │  receive)   │  │ (lock-free)  │  │                            │ │
+│  └─────────────┘  └──────────────┘  └────────────────────────────┘ │
+└────────────────────────────┬────────────────────────────────────────┘
                              │
-┌────────────────────────────▼────────────────────────────────────┐
-│           app-dev (FastAPI Control Plane)                        │
-│  Conversation state │ Work tickets │ Run traces │ Dashboard UI  │
-└────────────────────────────┬────────────────────────────────────┘
+┌────────────────────────────▼────────────────────────────────────────┐
+│           app-dev (FastAPI Control Plane)                            │
+│                                                                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
+│  │ Conversation │  │ Work Tickets │  │ Run Traces (full audit)  │  │
+│  │ State        │  │ Lifecycle    │  │ + Delivery Guard Epochs  │  │
+│  └──────────────┘  └──────────────┘  └──────────────────────────┘  │
+└────────────────────────────┬────────────────────────────────────────┘
                              │
-┌────────────────────────────▼────────────────────────────────────┐
-│           OpenClaw Gateway (Agent Runtime)                       │
-│  LLM orchestration │ Tool execution │ Session management        │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────▼────────────────────────────────────────┐
+│           OpenClaw Gateway (Agent Runtime)                           │
+│                                                                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
+│  │ LLM          │  │ Tool         │  │ Session Memory           │  │
+│  │ Orchestration│  │ Execution    │  │ (per agent × per channel)│  │
+│  └──────────────┘  └──────────────┘  └──────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Agents
+**Components:**
+
+| Component | Role | Technology |
+|-----------|------|-----------|
+| **Feishu Group Chat** | Communication surface; human + agent co-exist | Feishu/Lark |
+| **feishu-long-conn** | Message dispatch, Primary Election, Phase Orchestration | Python 3.12, multiprocessing |
+| **app-dev** | Control plane: state, tickets, traces, API | FastAPI, Pydantic |
+| **OpenClaw Gateway** | Agent runtime: LLM calls, tool use, session memory | Node.js |
+| **PostgreSQL** | Persistent state store | PostgreSQL 16 |
+| **Redis** | Cache, pub/sub | Redis 7 |
+| **Qdrant** | Vector memory (agent long-term recall) | Qdrant |
+| **MinIO** | Object storage (attachments, large outputs) | MinIO |
+
+---
+
+## 👥 Agents
 
 | Role | Responsibility |
 |------|---------------|
-| **Chief of Staff** | Intake coordinator. Analyzes requests, plans discussion phases, delivers final summaries. |
-| **Product Lead** | Product strategy, requirements, MoSCoW prioritization, MVP scope definition. |
+| **Chief of Staff** | Intake coordinator. Analyzes requests, plans PHASE_PLAN, delivers final summaries. |
+| **Product Lead** | Product strategy, requirements, MoSCoW prioritization, MVP scope. |
 | **Research Lead** | Market research, competitive analysis, data source evaluation. |
 | **Design Lead** | UX/UI architecture, interaction design, visual direction. |
 | **Engineering Lead** | Technical architecture, feasibility assessment, implementation planning. |
 | **Quality Lead** | Quality gates, test strategy, GO/NO-GO decisions. |
 | **Delivery Lead** | Sprint planning, timeline estimation, cross-team coordination. |
 
-## Key Features
+---
 
-### Phase Discussion (Structured Multi-Agent Collaboration)
-When a user messages the group, the Chief of Staff produces a `PHASE_PLAN` that defines structured discussion phases with designated leads and participants. The `PhaseOrchestrator` then executes each phase in order, ensuring focused and productive multi-agent collaboration rather than unstructured chatter.
+## 📚 Related Research
 
-### Primary Dispatcher Election
-In Feishu group chats, all 7 bots receive every message. A deterministic election ensures **only one bot** (the @mentioned agent) processes the message as the primary dispatcher. Others skip immediately, preventing duplicate or competing responses.
+OPC builds on several recent lines of work:
 
-### OpenClaw Agent Runtime
-Each agent runs as an autonomous LLM-powered process with:
-- Persistent session memory per channel
-- Tool execution capabilities
-- Structured output parsing (PHASE_PLAN, HANDOFF, TURN_COMPLETE directives)
+- **[MacNet (ICLR 2025)](https://arxiv.org/abs/2406.07155)** — graph topology matters; irregular topologies outperform regular ones at scale
+- **[OrgAgent (2026)](https://arxiv.org/abs/2604.01020)** — three-layer hierarchies (governance / execution / compliance) beat flat coordination
+- **[Internet of Agents (ICLR 2025)](https://arxiv.org/abs/2407.07061)** — agent registration & discovery, IM-like architecture, dynamic conversation flow control
+- **[Aegean (2025)](https://arxiv.org/abs/2512.20184)** — consensus protocol with early termination when sufficient agents converge
+- **[ChatDev (ACL 2024)](https://arxiv.org/abs/2307.07924)** — the original "virtual software company" paradigm
+- **[TheAgentCompany (CMU)](https://github.com/TheAgentCompany/TheAgentCompany)** — workplace-simulation benchmark
 
-### Control Plane
-- Conversation threading and state management
-- Work ticket lifecycle tracking
-- Run trace observability (full audit trail of every agent action)
-- Delivery guard epochs (preventing stale responses)
+---
 
-## Tech Stack
+## 🛣️ Roadmap
 
-| Component | Technology |
-|-----------|-----------|
-| Backend | Python 3.12, FastAPI, Pydantic |
-| Agent Runtime | OpenClaw Gateway (Node.js) |
-| LLM | DeepSeek V4 Pro (configurable) |
-| Chat Platform | Feishu/Lark (WebSocket long connections) |
-| Database | PostgreSQL 16 |
-| Cache | Redis 7 |
-| Vector DB | Qdrant |
-| Object Store | MinIO |
-| Deployment | Docker Compose |
+### V1.0–V1.5 — Foundation ✅
+- [x] 7 AI agents with distinct personas on Feishu group chat
+- [x] OpenClaw Gateway integration (LLM runtime + session memory)
+- [x] Sequential Handoff Queue (agents pass via `HANDOFF:` directives)
+- [x] Work ticket lifecycle tracking
+- [x] Run trace observability (full audit trail)
+- [x] Delivery Guard Epoch (stale response prevention)
+- [x] Interruption recovery (user mid-discussion intervention)
 
-## Project Structure
+### V1.8 — Phase Discussion + Primary Election ✅ *(current)*
+- [x] Deterministic Primary Dispatcher Election (lock-free, no central coordinator)
+- [x] LLM-planned `PHASE_PLAN` generation by Chief of Staff
+- [x] `PhaseOrchestrator` for structured multi-phase discussion execution
+- [x] Phase-level turn limits and global turn budget
+- [x] Dispatch path observability logging (feishu-long-conn container)
+- [x] Non-primary bot skip with debug event recording
 
-```
-app/
-├── api/              # FastAPI REST endpoints
-├── company/          # Company bootstrap and org models
-├── control_plane/    # Run traces, work tickets, observability
-├── conversation/     # Thread state, handoff management
-├── core/             # Config, logging
-├── feishu/           # Feishu integration (dispatch, long connections)
-├── orchestration/    # PhaseOrchestrator, plan parser, discussion models
-├── openclaw/         # OpenClaw gateway client, agent provisioning
-├── persona/          # Agent persona definitions
-├── memory/           # Agent memory subsystem
-├── skills/           # Skill catalog
-└── ui/               # Dashboard frontend
-tests/                # Comprehensive test suite
-docs/                 # Development plans and roadmaps
-scripts/              # Operational utilities
-```
+### V2.0 — Semantic Convergence *(next)*
+- [ ] Semantic consistency detection — agent positions stabilize across rounds
+- [ ] Information saturation — new turns add little novel content
+- [ ] Consensus signaling — agents explicitly declare alignment
+- [ ] Dynamic phase re-planning (COS adjusts phases mid-discussion)
 
-## Quick Start
+### V2.5 — Relationship Graph
+- [ ] Declarative multi-type relationship model (reporting / collaboration / information / informal)
+- [ ] Relationship-aware routing engine (local decisions, not central dispatch)
+- [ ] Visual org-chart editor
+- [ ] Department / role / agent templates
+
+### V3.0 — Evaluation & Benchmarks
+- [ ] Adapt TheAgentCompany scenarios for OPC
+- [ ] Process-level metrics dashboard (convergence, fairness, information flow)
+- [ ] Comparative benchmarks vs. flat / hierarchical baselines
+
+---
+
+## 🚀 Quick Start
 
 ### Prerequisites
 - Docker & Docker Compose
@@ -103,7 +215,6 @@ scripts/              # Operational utilities
 ### Setup
 
 ```bash
-# Clone
 git clone https://github.com/SenWeiV/multi-agent-company.git
 cd multi-agent-company
 
@@ -114,7 +225,7 @@ cp .env.example .env
 # Start infrastructure
 docker compose up -d
 
-# Start Feishu long connections (in a separate terminal)
+# Start Feishu long connections (7 independent bot processes)
 docker run -d --name feishu-long-conn \
   --network multi-agent-company_default \
   -v $(pwd):/workspace \
@@ -134,38 +245,43 @@ In your Feishu group chat (with all 7 bots added):
 
 The Chief of Staff will:
 1. Analyze the request
-2. Generate a structured PHASE_PLAN
+2. Generate a structured `PHASE_PLAN` (defining phases, leads, participants)
 3. Orchestrate multi-phase discussion across relevant agents
 4. Deliver a comprehensive response with each department's input
 
-## Configuration
+---
 
-Key environment variables (see `.env.example` for full list):
+## 🤔 Honest Caveats
 
-| Variable | Description |
-|----------|-------------|
-| `FEISHU_BOT_APPS_JSON` | JSON array of 7 bot configurations |
-| `OPENCLAW_GATEWAY_API_KEY` | LLM API key for agent reasoning |
-| `OPENCLAW_GATEWAY_TOKEN` | Gateway authentication token |
-| `FEISHU_VISIBLE_HANDOFF_TURN_LIMIT` | Max turns per conversation (default: 20) |
+- **IM-coupling is a trade-off.** Feishu dependency limits portability; future work may abstract the communication layer.
+- **Semantic convergence is unsolved.** V1.8 uses turn limits + phase structure as pragmatic boundaries; true semantic stopping is V2.0 research.
+- **7 LLM calls per phase turn.** Token cost is meaningful; cost optimization (selective participation, caching) is planned.
+- **Single-platform.** Currently Feishu-only; Slack/Teams/Discord adapters are feasible but not built.
 
-## Development
+---
 
-```bash
-# Run tests
-python -m pytest tests/ -v
+## 📂 Project Structure
 
-# Check logs (Feishu message processing)
-docker logs feishu-long-conn -f
-
-# Check logs (Agent runtime)
-docker logs multi-agent-company-openclaw-gateway -f
-
-# Clean agent sessions (reset state)
-docker exec multi-agent-company-openclaw-gateway \
-  sh -c 'rm -f /home/node/.openclaw/agents/opc-*/sessions/*.jsonl*'
+```
+app/
+├── api/              # FastAPI REST endpoints
+├── company/          # Company bootstrap and org models
+├── control_plane/    # Run traces, work tickets, observability
+├── conversation/     # Thread state, handoff management
+├── core/             # Config, logging
+├── feishu/           # Feishu integration (dispatch, long connections, Primary Election)
+├── orchestration/    # PhaseOrchestrator, plan parser, discussion models
+├── openclaw/         # OpenClaw gateway client, agent provisioning
+├── persona/          # Agent persona definitions
+├── memory/           # Agent memory subsystem
+├── skills/           # Skill catalog
+└── ui/               # Dashboard frontend
+tests/                # Test suite (phase orchestrator, plan parser, integration)
+docs/                 # Development plans and roadmaps
 ```
 
-## License
+---
+
+## 📄 License
 
 Private project. All rights reserved.
