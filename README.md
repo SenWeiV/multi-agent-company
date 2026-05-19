@@ -71,6 +71,32 @@ OPC explores **stopping when the discussion itself has converged**:
 - **Consensus signaling** — agents explicitly declare alignment
 - **Decision crystallization** — an actionable conclusion has emerged
 
+### 5. Hierarchical Memory Architecture
+
+Most multi-agent systems give each agent an isolated memory store, losing organizational knowledge when agents change or conversations end.
+
+OPC implements a **three-layer memory hierarchy** that mirrors how real companies retain knowledge:
+
+| Layer | Scope | Example |
+|-------|-------|---------|
+| **Company Memory** | Shared across all agents | Company strategy, product decisions, brand guidelines |
+| **Department Memory** | Shared within a department | Engineering standards, design system specs, research findings |
+| **Agent Private Memory** | Individual agent only | Personal working notes, in-progress drafts, interaction history |
+
+Memory flows **upward** (agent insights promote to department/company level) and **downward** (new agents inherit organizational context immediately). This prevents knowledge silos and ensures continuity when agent sessions reset.
+
+### 6. Layered Skill Catalog
+
+Similarly, OPC's skill system follows the same organizational hierarchy:
+
+| Layer | Scope | Example |
+|-------|-------|---------|
+| **Company Skills** | Available to all agents | Feishu messaging, document search, calendar access |
+| **Department Skills** | Shared within a department | Code review (Engineering), user research (Design), competitor analysis (Research) |
+| **Agent-Specific Skills** | Individual agent only | COS: phase planning; Quality Lead: test execution |
+
+This mirrors how real companies operate — everyone can book a meeting room (company skill), only engineers can deploy code (department skill), and only the CTO can approve architecture changes (role-specific skill).
+
 ---
 
 ## 📊 How OPC Differs From Existing Frameworks
@@ -284,4 +310,4 @@ docs/                 # Development plans and roadmaps
 
 ## 📄 License
 
-Private project. All rights reserved.
+*To be decided (likely Apache-2.0 or MIT).*
