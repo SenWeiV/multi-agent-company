@@ -75,15 +75,15 @@ OPC explores **stopping when the discussion itself has converged**:
 
 ## 📊 How OPC Differs From Existing Frameworks
 
-| Dimension | CrewAI | AutoGen | ChatDev 2.0 | MacNet | IoA | **OPC** |
-|-----------|--------|---------|-------------|--------|-----|---------|
-| **Positioning** | Task orchestration | Multi-agent chat | Software dev | Research artifact | A2A protocol | **Org collaboration simulation** |
-| **Communication** | In-memory, top-down | In-memory, group | In-memory, chain | DAG (one-way) | P2P protocol | **Enterprise IM (observable)** |
-| **Routing** | Manager-assigned | Selector LLM | Predefined chain | Topology traversal | Capability match | **Relationship-aware + LLM-planned** |
-| **Orchestration** | Sequential/hierarchical | Round-robin/selector | Fixed pipeline | DAG execution | Task-based | **Phase-structured (dynamic plan)** |
-| **Stop condition** | `max_iter` | `max_rounds` | Flow end | DAG terminus | Task complete | **Phase completion + epoch guard** |
-| **Human intervention** | Config required | Config required | Not supported | Not supported | Not supported | **Native (@mention)** |
-| **Observability** | Dashboard | Print/log | Terminal | Log | Log | **Same IM channel (zero-cost)** |
+| Dimension              | Paperclip       | CrewAI            | ChatDev 2.0       | MacNet             | IoA                | **OPC**                          |
+| ---------------------- | --------------- | ----------------- | ----------------- | ------------------ | ------------------ | -------------------------------- |
+| **Positioning**        | Zero-human ops  | Task orchestration | Software dev      | Research artifact  | A2A protocol       | **Org collaboration simulation** |
+| **Relationship model** | Reporting only  | Delegation chain  | Role description  | Topology           | Capability cards   | **Multi-type relationship graph** |
+| **Communication**      | Top-down        | Top-down          | Linear chain      | DAG (one-way)      | P2P                | **Multi-directional + structured** |
+| **Routing**            | Top-down        | Manager-assigned  | Predefined        | Topology traversal | Capability match   | **Relationship-aware**           |
+| **Stop condition**     | Budget          | `max_iter`        | Flow end          | DAG terminus       | Task complete      | **Semantic convergence**         |
+| **Cross-dept dialog**  | ❌              | ❌                | ⚠️ Weak           | ❌                 | ✅                 | **✅ Core**                       |
+| **Department concept** | ✅              | ⚠️                | ✅                | ❌                 | ❌                 | **✅ Core**                       |
 
 ---
 
