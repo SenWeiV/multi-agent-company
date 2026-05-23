@@ -15,7 +15,10 @@ def _mock_config_service() -> MagicMock:
     agent_config.openclaw_agent_id = "opc-chief-of-staff"
     agent_config.max_tokens = 2048
     provider_config = MagicMock()
-    provider_model = "deepseek-chat"
+    provider_config.baseUrl = "https://api.deepseek.com/v1"
+    provider_config.apiKey = "sk-test-key"
+    provider_model = MagicMock()
+    provider_model.id = "deepseek-chat"
     svc.get_provider_for_agent.return_value = (agent_config, provider_config, provider_model)
     svc.is_core_employee.return_value = True
     return svc
@@ -46,10 +49,6 @@ class TestGenerateQuickAck:
         settings = MagicMock()
         settings.feishu_quick_ack_enabled = True
         settings.feishu_quick_ack_max_tokens = 80
-        settings.openclaw_gateway_base_url = "http://localhost:18789"
-        settings.openclaw_gateway_token = "test-token"
-        settings.openclaw_gateway_api_key = ""
-        settings.openclaw_gateway_timeout_seconds = 90
         mock_settings.return_value = settings
 
         response_body = json.dumps({
@@ -78,9 +77,6 @@ class TestGenerateQuickAck:
         settings = MagicMock()
         settings.feishu_quick_ack_enabled = True
         settings.feishu_quick_ack_max_tokens = 80
-        settings.openclaw_gateway_base_url = "http://localhost:18789"
-        settings.openclaw_gateway_token = "test-token"
-        settings.openclaw_gateway_api_key = ""
         mock_settings.return_value = settings
 
         mock_urlopen.side_effect = URLError("timeout")
@@ -100,9 +96,6 @@ class TestGenerateQuickAck:
         settings = MagicMock()
         settings.feishu_quick_ack_enabled = True
         settings.feishu_quick_ack_max_tokens = 80
-        settings.openclaw_gateway_base_url = "http://localhost:18789"
-        settings.openclaw_gateway_token = "test-token"
-        settings.openclaw_gateway_api_key = ""
         mock_settings.return_value = settings
 
         mock_urlopen.side_effect = HTTPError("http://x", 500, "err", {}, None)
@@ -118,13 +111,10 @@ class TestGenerateQuickAck:
 
     @patch("app.openclaw.services.get_settings")
     @patch("app.openclaw.services.urlopen")
-    def test_quick_ack_session_key_isolation(self, mock_urlopen: MagicMock, mock_settings: MagicMock) -> None:
+    def test_quick_ack_uses_provider_api_directly(self, mock_urlopen: MagicMock, mock_settings: MagicMock) -> None:
         settings = MagicMock()
         settings.feishu_quick_ack_enabled = True
         settings.feishu_quick_ack_max_tokens = 80
-        settings.openclaw_gateway_base_url = "http://localhost:18789"
-        settings.openclaw_gateway_token = "test-token"
-        settings.openclaw_gateway_api_key = ""
         mock_settings.return_value = settings
 
         response_body = json.dumps({
@@ -145,11 +135,11 @@ class TestGenerateQuickAck:
             channel_id="oc_test",
         )
 
-        # Check that the request used an :ack suffixed session key
+        # Check that the request goes to provider API, not gateway
         call_args = mock_urlopen.call_args
         request_obj = call_args[0][0]
-        headers = dict(request_obj.headers)
-        assert headers.get("X-openclaw-session-key", "").endswith(":ack")
+        assert "openclaw-gateway" not in request_obj.full_url
+        assert "chat/completions" in request_obj.full_url
 
     @patch("app.openclaw.services.get_settings")
     def test_quick_ack_disabled_by_config(self, mock_settings: MagicMock) -> None:

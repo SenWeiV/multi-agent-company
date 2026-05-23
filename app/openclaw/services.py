@@ -1122,9 +1122,7 @@ class OpenClawGatewayAdapter:
         if not settings.feishu_quick_ack_enabled:
             return None
 
-        agent_config, _, _ = self._config_service.get_provider_for_agent(employee_id)
-        session_binding = self._provisioning_service.get_session_binding(employee_id, surface, channel_id, topic_id=topic_id)
-        ack_session_key = f"{session_binding.session_key}:ack"
+        agent_config, provider_config, provider_model = self._config_service.get_provider_for_agent(employee_id)
 
         messages = [
             {
@@ -1134,29 +1132,28 @@ class OpenClawGatewayAdapter:
             {"role": "user", "content": user_message},
         ]
 
-        payload = {
-            "model": f"openclaw:{agent_config.openclaw_agent_id}",
+        payload: dict[str, Any] = {
+            "model": provider_model.id,
             "messages": messages,
             "max_tokens": settings.feishu_quick_ack_max_tokens,
             "temperature": 0.3,
         }
         headers = {
             "Content-Type": "application/json; charset=utf-8",
-            "X-OpenClaw-Session-Key": ack_session_key,
-            "X-OpenClaw-Agent-Id": agent_config.openclaw_agent_id,
+            "Authorization": f"Bearer {provider_config.apiKey}",
         }
-        token = settings.openclaw_gateway_token or settings.openclaw_gateway_api_key
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+
+        base_url = provider_config.baseUrl.rstrip("/")
+        url = f"{base_url}/chat/completions"
 
         request = Request(
-            self._native_gateway_chat_url(settings.openclaw_gateway_base_url),
+            url,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers=headers,
             method="POST",
         )
         try:
-            with urlopen(request, timeout=8) as response:
+            with urlopen(request, timeout=6) as response:
                 response_payload = json.loads(response.read().decode("utf-8"))
             return self._extract_chat_content(response_payload)
         except Exception:

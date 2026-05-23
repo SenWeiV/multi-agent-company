@@ -815,7 +815,7 @@ class FeishuSurfaceAdapterService:
                             )
                             logger.info("[%s] Quick ACK sent before source turn", binding.virtual_employee)
                     except Exception:
-                        logger.debug("Quick ACK failed (non-blocking)", exc_info=True)
+                        logger.warning("Quick ACK failed (non-blocking)", exc_info=True)
 
                 dialogue_result = dialogue_service.generate_reply(
                     employee_id=binding.virtual_employee,
