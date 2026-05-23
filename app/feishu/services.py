@@ -219,6 +219,10 @@ class FeishuSurfaceAdapterService:
                 detail=f"Unsupported message_type: {message.get('message_type') or 'unknown'}",
             )
 
+        sender = event.get("sender", {})
+        if sender.get("sender_type") == "app":
+            return FeishuWebhookResult(status="ignored", app_id=app_id, detail="Bot message ignored.")
+
         intent = self._extract_text_intent(message.get("content", ""))
         if not intent:
             if self._surface_for_chat_type(message.get("chat_type")) == ConversationSurface.FEISHU_GROUP:
@@ -240,6 +244,36 @@ class FeishuSurfaceAdapterService:
             raise ValueError("Missing Feishu chat_id in callback payload.")
         raw_mentions_summary = self._summarize_mentions(self._message_mentions(event))
 
+        from app.feishu.commands import parse_feishu_command
+        parsed_cmd = parse_feishu_command(intent)
+        if parsed_cmd is not None and parsed_cmd.command != "new":
+            # In group chat, only the COS bot handles control commands to avoid duplicate responses.
+            # /new is excluded because it still needs the full dispatch election for the actual reply.
+            if surface == ConversationSurface.FEISHU_GROUP and binding.virtual_employee != "chief-of-staff":
+                return FeishuWebhookResult(
+                    status="ignored", app_id=app_id, surface=surface,
+                    detail=f"Command /{parsed_cmd.command} deferred to COS.",
+                )
+            channel_id = self._channel_id_for(surface, chat_id)
+            if parsed_cmd.command == "end":
+                return self._handle_end_command(
+                    app_id=app_id, chat_id=chat_id, surface=surface,
+                    channel_id=channel_id, binding=binding, event=event,
+                    source_message_id=message_id,
+                )
+            if parsed_cmd.command == "status":
+                return self._handle_status_command(
+                    app_id=app_id, chat_id=chat_id, surface=surface,
+                    channel_id=channel_id, binding=binding,
+                    source_message_id=message_id,
+                )
+            if parsed_cmd.command == "reset":
+                return self._handle_reset_command(
+                    app_id=app_id, chat_id=chat_id, surface=surface,
+                    channel_id=channel_id, binding=binding,
+                    source_message_id=message_id,
+                )
+
         command_mode = self._parse_control_command(intent)
         if command_mode == "new_only":
             return self._handle_new_conversation_marker(
@@ -253,9 +287,22 @@ class FeishuSurfaceAdapterService:
         normalized_intent = self._strip_new_command_prefix(intent) if force_new_conversation else intent
 
         channel_id = self._channel_id_for(surface, chat_id)
+        new_topic_id: str | None = None
         existing_thread = None
-        if not force_new_conversation:
-            existing_thread = self._conversation.find_thread_by_surface_channel(surface, channel_id)
+        if force_new_conversation:
+            from app.feishu.commands import generate_topic_id
+            new_topic_id = generate_topic_id()
+            old_thread = self._conversation.find_thread_by_surface_channel(surface, channel_id)
+            if old_thread and old_thread.status not in ("ended", "draft"):
+                self._conversation.end_thread(old_thread.thread_id)
+        else:
+            candidate = self._conversation.find_thread_by_surface_channel(surface, channel_id)
+            if candidate and candidate.status == "ended":
+                from app.feishu.commands import generate_topic_id
+                new_topic_id = generate_topic_id()
+                force_new_conversation = True
+            else:
+                existing_thread = candidate
         prior_active_runtrace_ref = (
             (existing_thread.active_runtrace_ref or existing_thread.runtrace_ref) if existing_thread else None
         )
@@ -459,14 +506,6 @@ class FeishuSurfaceAdapterService:
                 ]
             )
         )
-        if not forced_handoff_targets and surface == ConversationSurface.FEISHU_GROUP:
-            forced_handoff_targets = get_default_downstream_targets(binding.virtual_employee)
-            if forced_handoff_targets:
-                logger.info(
-                    "forced_handoff_targets empty, using routing defaults for %s: %s",
-                    binding.virtual_employee,
-                    forced_handoff_targets,
-                )
         participant_ids = self._build_participants(event, binding.virtual_employee, dispatch_target_ids)
         activation_hint_targets = list(
             dict.fromkeys(
@@ -492,6 +531,7 @@ class FeishuSurfaceAdapterService:
             bound_agent_ids=dispatch_target_ids,
             title=normalized_intent[:80],
             thread_id=existing_thread.thread_id if existing_thread else None,
+            topic_id=new_topic_id,
         )
         intake_result = self._conversation.intake(intake_request)
 
@@ -766,6 +806,7 @@ class FeishuSurfaceAdapterService:
                     ),
                     forced_handoff_targets=forced_handoff_targets,
                     collaboration_context=collaboration_context,
+                    topic_id=intake_result.thread.topic_id,
                 )
                 run_trace = get_control_plane_service().append_run_trace_event(
                     run_trace.runtrace_id,
@@ -832,6 +873,7 @@ class FeishuSurfaceAdapterService:
                     ),
                     collaboration_context=collaboration_context,
                     turn_mode="source",
+                    topic_id=intake_result.thread.topic_id,
                 )
                 if handoff_name_contract_violation:
                     get_control_plane_service().flag_run_trace_handoff_contract_violation(run_trace.runtrace_id)
@@ -1255,10 +1297,31 @@ class FeishuSurfaceAdapterService:
         dead_letters = [
             record
             for record in self._outbound.list()
-            if record.status == "failed" and (include_resolved or record.replayed_by_outbound_ref is None)
+            if record.status == "failed" and (
+                include_resolved
+                or (record.replayed_by_outbound_ref is None and record.resolved_at is None)
+            )
         ]
         dead_letters.sort(key=lambda item: item.last_attempt_at, reverse=True)
         return dead_letters
+
+    def resolve_dead_letter(self, outbound_id: str) -> FeishuOutboundMessageRecord:
+        record = self._outbound.get(outbound_id)
+        if record is None:
+            raise ValueError(f"Outbound record not found: {outbound_id}")
+        if record.status != "failed":
+            raise ValueError(f"Only failed messages can be resolved, got: {record.status}")
+        if record.resolved_at is not None:
+            return record
+        return self._outbound.save(record.model_copy(update={"resolved_at": datetime.now(UTC)}))
+
+    def bulk_resolve_dead_letters(self, before: datetime) -> int:
+        count = 0
+        for record in self._outbound.list():
+            if record.status == "failed" and record.created_at < before and record.resolved_at is None:
+                self._outbound.save(record.model_copy(update={"resolved_at": datetime.now(UTC)}))
+                count += 1
+        return count
 
     def list_replay_audit(
         self,
@@ -1402,31 +1465,55 @@ class FeishuSurfaceAdapterService:
         chat_id: str,
         binding: Any,
     ) -> FeishuWebhookResult:
+        from app.feishu.commands import generate_topic_id
+
+        channel_id = self._channel_id_for(surface, chat_id)
+
         if surface == ConversationSurface.FEISHU_GROUP:
-            prompt = "群聊默认不支持自由 `/new`。如果需要新起一条可见协作，请使用 `/new @bot 你的问题`，或在 Dashboard 中显式发起新线程。"
+            existing_thread = self._conversation.find_thread_by_surface_channel(surface, channel_id)
+            if existing_thread and existing_thread.status not in ("ended", "draft"):
+                self._conversation.end_thread(existing_thread.thread_id)
+
+            topic_id = generate_topic_id()
+            dispatch_target_ids = [binding.virtual_employee]
+            participant_ids = self._build_participants(event, binding.virtual_employee, dispatch_target_ids)
+            thread = self._conversation.start_new_thread(
+                surface=surface,
+                channel_id=channel_id,
+                initiator_id=self._resolve_initiator(event),
+                participant_ids=participant_ids,
+                bound_agent_ids=dispatch_target_ids,
+                title="新会话",
+                topic_id=topic_id,
+            )
+            prompt = f"已开启新话题 (topic: {topic_id})。下一条消息将在全新上下文中处理。"
             send_result = self.send_text_message(
                 FeishuSendMessageRequest(
                     app_id=app_id,
                     chat_id=chat_id,
                     text=prompt,
                     source_kind="control_reply",
+                    thread_ref=thread.thread_id,
                     idempotency_key=self._auto_reply_idempotency_key(
                         app_id=app_id,
-                        message_id=f"group-new-block-{chat_id}",
+                        message_id=f"new-group-{thread.thread_id}",
                         source_kind="control_reply",
                         ordinal=1,
                         text=prompt,
                     ),
                 )
             )
+            logger.info("[%s] /new command: created topic %s, thread %s", binding.virtual_employee, topic_id, thread.thread_id)
             return FeishuWebhookResult(
-                status="ignored",
+                status="processed",
                 app_id=app_id,
                 surface=surface,
+                thread_id=thread.thread_id,
                 reply_sent=send_result.status in {"sent", "deduplicated"},
                 reply_count=1 if send_result.status in {"sent", "deduplicated"} else 0,
-                dispatch_mode="group_new_blocked",
-                detail="Group /new requires explicit targeted syntax.",
+                target_agent_ids=dispatch_target_ids,
+                dispatch_mode="command_new",
+                detail=f"New topic {topic_id} started.",
             )
 
         channel_id = self._channel_id_for(surface, chat_id)
@@ -1469,6 +1556,146 @@ class FeishuSurfaceAdapterService:
             dispatch_mode="new_conversation_marker",
             detail="Started a fresh conversation thread.",
         )
+
+    def _handle_end_command(
+        self,
+        *,
+        app_id: str,
+        chat_id: str,
+        surface: ConversationSurface,
+        channel_id: str,
+        binding: Any,
+        event: dict[str, Any],
+        source_message_id: str = "",
+    ) -> FeishuWebhookResult:
+        thread = self._conversation.find_thread_by_surface_channel(surface, channel_id)
+        if thread is None or thread.status == "ended":
+            self.send_text_message(
+                FeishuSendMessageRequest(
+                    app_id=app_id,
+                    chat_id=chat_id,
+                    text="当前没有活跃的讨论。发送新消息或 /new 开启新话题。",
+                    source_kind="control_reply",
+                    idempotency_key=self._auto_reply_idempotency_key(
+                        app_id=app_id, message_id=source_message_id or f"end-no-thread-{chat_id}",
+                        source_kind="control_reply", ordinal=1, text="no-active-thread",
+                    ),
+                )
+            )
+            return FeishuWebhookResult(
+                status="processed", app_id=app_id, surface=surface,
+                dispatch_mode="command_end", detail="No active thread to end.",
+            )
+
+        self._conversation.end_thread(thread.thread_id)
+
+        self.send_text_message(
+            FeishuSendMessageRequest(
+                app_id=app_id,
+                chat_id=chat_id,
+                text="讨论已结束。发送新消息或 /new 开启新话题。",
+                source_kind="control_reply",
+                idempotency_key=self._auto_reply_idempotency_key(
+                    app_id=app_id, message_id=source_message_id or f"end-{thread.thread_id}",
+                    source_kind="control_reply", ordinal=1, text="thread-ended",
+                ),
+            )
+        )
+        logger.info("[%s] /end command: thread %s ended", binding.virtual_employee, thread.thread_id)
+        return FeishuWebhookResult(
+            status="processed", app_id=app_id, surface=surface,
+            thread_id=thread.thread_id, dispatch_mode="command_end",
+            detail=f"Thread {thread.thread_id} ended by /end command.",
+        )
+
+    def _handle_status_command(
+        self,
+        *,
+        app_id: str,
+        chat_id: str,
+        surface: ConversationSurface,
+        channel_id: str,
+        binding: Any,
+        source_message_id: str = "",
+    ) -> FeishuWebhookResult:
+        thread = self._conversation.find_thread_by_surface_channel(surface, channel_id)
+        if thread is None or thread.status == "ended":
+            status_text = "当前没有活跃的话题。"
+        else:
+            pending_agents = []
+            if thread.pending_handoff:
+                pending_agents = getattr(thread.pending_handoff, "pending_targets", [])
+            topic_label = thread.topic_id or "(default)"
+            status_text = (
+                f"话题: {thread.title}\n"
+                f"Topic ID: {topic_label}\n"
+                f"状态: {thread.status}\n"
+                f"Delivery Epoch: {thread.delivery_guard_epoch}\n"
+                f"待处理 Agent: {', '.join(pending_agents) if pending_agents else '无'}"
+            )
+
+        self.send_text_message(
+            FeishuSendMessageRequest(
+                app_id=app_id,
+                chat_id=chat_id,
+                text=status_text,
+                source_kind="control_reply",
+                idempotency_key=self._auto_reply_idempotency_key(
+                    app_id=app_id, message_id=source_message_id or f"status-{chat_id}",
+                    source_kind="control_reply", ordinal=1, text="status",
+                ),
+            )
+        )
+        return FeishuWebhookResult(
+            status="processed", app_id=app_id, surface=surface,
+            dispatch_mode="command_status", detail="Status returned.",
+        )
+
+    def _handle_reset_command(
+        self,
+        *,
+        app_id: str,
+        chat_id: str,
+        surface: ConversationSurface,
+        channel_id: str,
+        binding: Any,
+        source_message_id: str = "",
+    ) -> FeishuWebhookResult:
+        thread = self._conversation.find_thread_by_surface_channel(surface, channel_id)
+        if thread is not None:
+            self._conversation.end_thread(thread.thread_id)
+
+        self._clear_gateway_sessions_for_channel(surface, channel_id)
+
+        self.send_text_message(
+            FeishuSendMessageRequest(
+                app_id=app_id,
+                chat_id=chat_id,
+                text="已重置。所有会话状态已清除，下一条消息将开启全新对话。",
+                source_kind="control_reply",
+                idempotency_key=self._auto_reply_idempotency_key(
+                    app_id=app_id, message_id=source_message_id or f"reset-{chat_id}",
+                    source_kind="control_reply", ordinal=1, text="reset",
+                ),
+            )
+        )
+        logger.info("[%s] /reset command: channel %s reset", binding.virtual_employee, channel_id)
+        return FeishuWebhookResult(
+            status="processed", app_id=app_id, surface=surface,
+            dispatch_mode="command_reset", detail="Channel reset by /reset command.",
+        )
+
+    def _clear_gateway_sessions_for_channel(self, surface: ConversationSurface, channel_id: str) -> None:
+        from app.openclaw.services import get_openclaw_provisioning_service
+        try:
+            openclaw = get_openclaw_provisioning_service()
+            for seat_binding in self._conversation.list_bot_seat_bindings():
+                session_binding = openclaw.get_session_binding(
+                    seat_binding.virtual_employee, surface.value, channel_id
+                )
+                openclaw.clear_session(session_binding.session_key)
+        except Exception:
+            logger.debug("Best-effort gateway session clear failed for channel %s", channel_id)
 
     def _orchestrate_visible_handoffs(
         self,
@@ -1574,6 +1801,7 @@ class FeishuSurfaceAdapterService:
                         visible_participants=visible_participants,
                         conversation_history=None,
                         turn_mode="phase_plan_retry",
+                        topic_id=thread.topic_id,
                     )
                     retry_plan_source = retry_result.phase_plan_raw or retry_result.reply_text
                     plan = parse_phase_plan(retry_plan_source, valid_employee_ids=all_employee_ids)
@@ -1606,6 +1834,7 @@ class FeishuSurfaceAdapterService:
                         visible_participants=visible_participants,
                         conversation_history=phase_context,
                         turn_mode="phase_discussion",
+                        topic_id=thread.topic_id,
                     )
 
                 def _phase_send_message(*, employee_id: str, text: str) -> FeishuSendMessageResult:
@@ -1751,6 +1980,7 @@ class FeishuSurfaceAdapterService:
                 turn_mode="handoff_target",
                 handoff_context=handoff_context,
                 collaboration_context=collaboration_context,
+                topic_id=thread.topic_id,
             )
             repetition_violation = self._is_handoff_repetition_violation(
                 source_reply=source_reply_for_turn,
@@ -1793,6 +2023,7 @@ class FeishuSurfaceAdapterService:
                             "prior_reply_text": dialogue_result.reply_text,
                         }
                     ),
+                    topic_id=thread.topic_id,
                 )
                 if self._is_handoff_repetition_violation(
                     source_reply=source_reply_for_turn,
@@ -1863,6 +2094,7 @@ class FeishuSurfaceAdapterService:
                 collaboration_context=collaboration_context,
                 turn_mode="handoff_target",
                 handoff_context=handoff_context,
+                topic_id=thread.topic_id,
             )
             if nested_contract_violation:
                 get_control_plane_service().flag_run_trace_handoff_contract_violation(runtrace_ref)
@@ -3345,12 +3577,6 @@ class FeishuSurfaceAdapterService:
                 ],
             )
         final_handoff_targets = list(dict.fromkeys(reply_name_targets))
-        if not final_handoff_targets and forced_handoff_targets:
-            logger.info(
-                "final_handoff_targets empty, falling back to forced_handoff_targets: %s",
-                forced_handoff_targets,
-            )
-            final_handoff_targets = list(dict.fromkeys(forced_handoff_targets))
         naming_contract_violation = self._is_named_handoff_contract_violation(
             reply_text=reply_text,
             final_handoff_targets=final_handoff_targets,
@@ -3393,6 +3619,7 @@ class FeishuSurfaceAdapterService:
         collaboration_context: OpenClawCollaborationContext | None,
         turn_mode: str,
         handoff_context: OpenClawHandoffContext | None = None,
+        topic_id: str | None = None,
     ) -> tuple[OpenClawChatResult, list[str], list[str], list[str], str | None, bool]:
         def resolve(
             result: OpenClawChatResult,
@@ -3465,6 +3692,7 @@ class FeishuSurfaceAdapterService:
             turn_mode=turn_mode,
             handoff_context=retry_handoff_context,
             collaboration_context=retry_collaboration_context,
+            topic_id=topic_id,
         )
         (
             reply_text,

@@ -49,6 +49,7 @@ class ConversationThread(BaseModel):
     openclaw_session_refs: dict[str, str] = Field(default_factory=dict)
     visible_room_ref: str | None = None
     delivery_guard_epoch: int = 0
+    topic_id: str | None = None
     last_committed_state: dict[str, Any] = Field(default_factory=dict)
     pending_handoff: PendingHandoffState | None = None
     superseded_runtrace_refs: list[str] = Field(default_factory=list)
@@ -93,6 +94,7 @@ class ConversationIntakeRequest(BaseModel):
     bound_agent_ids: list[str] = Field(default_factory=list)
     title: str | None = None
     thread_id: str | None = None
+    topic_id: str | None = None
 
 
 class ConversationIntakeResult(BaseModel):

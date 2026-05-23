@@ -189,6 +189,7 @@ class FeishuOutboundMessageRecord(BaseModel):
     replay_source_outbound_ref: str | None = None
     replay_root_outbound_ref: str | None = None
     last_replay_at: datetime | None = None
+    resolved_at: datetime | None = None
     attachment_object_ref: str | None = None
     attachment_bucket: str | None = None
     attachment_object_key: str | None = None

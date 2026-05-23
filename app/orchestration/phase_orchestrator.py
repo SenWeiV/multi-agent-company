@@ -50,6 +50,7 @@ class PhaseOrchestrator:
 
     def run(self) -> dict[str, Any]:
         logger.info("PhaseOrchestrator.run() starting with %d phases", len(self._plan.phases))
+        self._enforce_summary_phase_constraints()
         for phase in self._plan.phases:
             if self._visible_turn_count >= self._global_turn_limit:
                 break
@@ -70,6 +71,19 @@ class PhaseOrchestrator:
             "reply_count": self.reply_count,
             "reply_errors": self.reply_errors,
         }
+
+    def _enforce_summary_phase_constraints(self) -> None:
+        if not self._plan.phases:
+            return
+        last_phase = self._plan.phases[-1]
+        summary_keywords = {"summary", "总结", "结论", "wrap-up", "wrapup"}
+        is_summary = any(kw in (last_phase.phase_id or "").lower() or kw in (last_phase.title or "").lower() for kw in summary_keywords)
+        if is_summary and last_phase.lead_id == self._source_employee_id:
+            if last_phase.participants:
+                logger.info("Enforcing summary phase constraint: removing participants from phase %s", last_phase.phase_id)
+                last_phase.participants = []
+            if last_phase.max_turns > 2:
+                last_phase.max_turns = 2
 
     def _execute_phase(self, phase: DiscussionPhase) -> None:
         phase.status = PhaseStatus.ACTIVE

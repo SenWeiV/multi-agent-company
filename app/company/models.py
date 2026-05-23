@@ -104,6 +104,49 @@ class RoutingRule(BaseModel):
     description: str = ""
 
 
+class WorkTicketStatus(StrEnum):
+    DRAFT = "draft"
+    SUBMITTED = "submitted"
+    WORKING = "working"
+    REVIEW = "review"
+    COMPLETED = "completed"
+    BLOCKED = "blocked"
+    FAILED = "failed"
+    CANCELED = "canceled"
+    CAPTURED = "captured"
+    CONSULTING = "consulting"
+    QUEUED = "queued"
+    ACTIVE = "active"
+    UNDER_REVIEW = "under_review"
+    OVERRIDE_PENDING = "override_pending"
+    ESCALATED = "escalated"
+
+
+TERMINAL_STATUSES: set[WorkTicketStatus] = {
+    WorkTicketStatus.COMPLETED,
+    WorkTicketStatus.FAILED,
+    WorkTicketStatus.CANCELED,
+}
+
+_ALL_NON_TERMINAL: set[WorkTicketStatus] = {s for s in WorkTicketStatus if s not in TERMINAL_STATUSES}
+
+VALID_TRANSITIONS: dict[WorkTicketStatus, set[WorkTicketStatus]] = {
+    WorkTicketStatus.DRAFT: {WorkTicketStatus.SUBMITTED, WorkTicketStatus.CANCELED},
+    WorkTicketStatus.SUBMITTED: {WorkTicketStatus.WORKING, WorkTicketStatus.FAILED, WorkTicketStatus.CANCELED},
+    WorkTicketStatus.WORKING: {WorkTicketStatus.REVIEW, WorkTicketStatus.BLOCKED, WorkTicketStatus.FAILED, WorkTicketStatus.CANCELED},
+    WorkTicketStatus.REVIEW: {WorkTicketStatus.COMPLETED, WorkTicketStatus.WORKING, WorkTicketStatus.CANCELED},
+    WorkTicketStatus.BLOCKED: {WorkTicketStatus.WORKING, WorkTicketStatus.FAILED, WorkTicketStatus.CANCELED},
+    # Legacy statuses — permissive transitions for backward compatibility
+    WorkTicketStatus.CAPTURED: _ALL_NON_TERMINAL | TERMINAL_STATUSES,
+    WorkTicketStatus.CONSULTING: _ALL_NON_TERMINAL | TERMINAL_STATUSES,
+    WorkTicketStatus.QUEUED: {WorkTicketStatus.WORKING, WorkTicketStatus.SUBMITTED, WorkTicketStatus.CANCELED},
+    WorkTicketStatus.ACTIVE: _ALL_NON_TERMINAL | {WorkTicketStatus.COMPLETED, WorkTicketStatus.CANCELED},
+    WorkTicketStatus.UNDER_REVIEW: {WorkTicketStatus.COMPLETED, WorkTicketStatus.WORKING, WorkTicketStatus.CANCELED},
+    WorkTicketStatus.OVERRIDE_PENDING: _ALL_NON_TERMINAL | TERMINAL_STATUSES,
+    WorkTicketStatus.ESCALATED: _ALL_NON_TERMINAL | TERMINAL_STATUSES,
+}
+
+
 class WorkTicket(BaseModel):
     ticket_id: str
     title: str
@@ -114,4 +157,14 @@ class WorkTicket(BaseModel):
     runtrace_ref: str | None = None
     artifacts: list[str] = Field(default_factory=list)
     supersede_refs: list[str] = Field(default_factory=list)
-    status: str = "draft"
+    status: WorkTicketStatus = WorkTicketStatus.DRAFT
+
+    def transition_to(self, target: WorkTicketStatus | str) -> "WorkTicket":
+        if isinstance(target, str):
+            target = WorkTicketStatus(target)
+        if self.status in TERMINAL_STATUSES:
+            raise ValueError(f"Cannot transition from terminal status {self.status}")
+        allowed = VALID_TRANSITIONS.get(self.status, set())
+        if target not in allowed:
+            raise ValueError(f"Invalid transition: {self.status} → {target}")
+        return self.model_copy(update={"status": target})

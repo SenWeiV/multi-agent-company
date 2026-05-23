@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from app.company.models import WorkTicket
+from app.company.models import WorkTicket, WorkTicketStatus
 from app.control_plane.governance import BudgetPolicyService, TriggerScheduler
 from app.control_plane.models import (
     BudgetCheck,
@@ -83,9 +83,10 @@ class WorkTicketService:
     def list(self) -> list[WorkTicket]:
         return self._store.list()
 
-    def set_status(self, ticket_id: str, status: str) -> WorkTicket:
+    def set_status(self, ticket_id: str, status: str | WorkTicketStatus) -> WorkTicket:
         ticket = self.get_required(ticket_id)
-        return self._store.save(ticket.model_copy(update={"status": status}))
+        transitioned = ticket.transition_to(status)
+        return self._store.save(transitioned)
 
     def attach_artifact(self, ticket_id: str, artifact_id: str) -> WorkTicket:
         ticket = self.get_required(ticket_id)

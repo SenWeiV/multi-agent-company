@@ -790,13 +790,14 @@ class OpenClawProvisioningService:
         get_openclaw_runtime_home_materializer().sync()
         return self.build_agent_detail(employee_id)
 
-    def get_session_binding(self, employee_id: str, surface: str, channel_id: str) -> OpenClawSessionBinding:
+    def get_session_binding(self, employee_id: str, surface: str, channel_id: str, topic_id: str | None = None) -> OpenClawSessionBinding:
         binding = self.get_agent_binding(employee_id)
         normalized_channel = channel_id.replace(":", "-").replace("/", "-")
         if surface == "feishu_dm":
             session_key = f"agent:{binding.openclaw_agent_id}:feishu:dm:{normalized_channel}"
         elif surface == "feishu_group":
-            session_key = f"agent:{binding.openclaw_agent_id}:feishu:group:{normalized_channel}"
+            base = f"agent:{binding.openclaw_agent_id}:feishu:group:{normalized_channel}"
+            session_key = f"{base}:topic:{topic_id}" if topic_id else base
         else:
             session_key = f"agent:{binding.openclaw_agent_id}:{surface}:{normalized_channel}"
         return OpenClawSessionBinding(
@@ -806,6 +807,27 @@ class OpenClawProvisioningService:
             channel_id=channel_id,
             session_key=session_key,
         )
+
+    def rotate_session(self, employee_id: str, surface: str, channel_id: str, new_topic_id: str) -> OpenClawSessionBinding:
+        return self.get_session_binding(employee_id, surface, channel_id, topic_id=new_topic_id)
+
+    def clear_session(self, session_key: str) -> bool:
+        settings = get_settings()
+        base_url = settings.openclaw_gateway_base_url.strip().rstrip("/")
+        if not base_url:
+            return False
+        url = f"{base_url}/sessions/{session_key}"
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        token = settings.openclaw_gateway_token or settings.openclaw_gateway_api_key
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            request = Request(url, method="DELETE", headers=headers)
+            with urlopen(request, timeout=10) as resp:
+                return resp.status in (200, 204, 404)
+        except Exception:
+            logger.warning("Failed to clear gateway session %s", session_key)
+            return False
 
     def _core_employee_packs(self) -> list[EmployeePack]:
         return get_employee_pack_compiler().list_employee_packs(core_only=True)
@@ -840,9 +862,10 @@ class OpenClawGatewayAdapter:
         turn_mode: str = "source",
         handoff_context: OpenClawHandoffContext | None = None,
         collaboration_context: OpenClawCollaborationContext | None = None,
+        topic_id: str | None = None,
     ) -> OpenClawChatResult:
         agent_config, provider_config, provider_model = self._config_service.get_provider_for_agent(employee_id)
-        session_binding = self._provisioning_service.get_session_binding(employee_id, surface, channel_id)
+        session_binding = self._provisioning_service.get_session_binding(employee_id, surface, channel_id, topic_id=topic_id)
         workspace_bundle = self._provisioning_service.get_workspace_bundle(employee_id)
 
         messages = [
@@ -1689,6 +1712,7 @@ class OpenClawDialogueService:
         turn_mode: str = "source",
         handoff_context: OpenClawHandoffContext | None = None,
         collaboration_context: OpenClawCollaborationContext | None = None,
+        topic_id: str | None = None,
     ) -> OpenClawChatResult:
         return self._gateway_adapter.invoke_agent(
             employee_id=employee_id,
@@ -1703,6 +1727,7 @@ class OpenClawDialogueService:
             turn_mode=turn_mode,
             handoff_context=handoff_context,
             collaboration_context=collaboration_context,
+            topic_id=topic_id,
         )
 
     def infer_visible_handoff_targets(

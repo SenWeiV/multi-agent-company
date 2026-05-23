@@ -98,6 +98,14 @@ class ConversationService:
         thread = self.get_required_thread(thread_id)
         return self._threads.save(thread.model_copy(update={"status": status}))
 
+    def clear_pending_handoff(self, thread_id: str) -> ConversationThread:
+        thread = self.get_required_thread(thread_id)
+        return self._threads.save(thread.model_copy(update={"pending_handoff": None}))
+
+    def end_thread(self, thread_id: str) -> ConversationThread:
+        thread = self.get_required_thread(thread_id)
+        return self._threads.save(thread.model_copy(update={"status": "ended", "pending_handoff": None}))
+
     def set_active_runtrace(
         self,
         thread_id: str,
@@ -181,6 +189,7 @@ class ConversationService:
         participant_ids: list[str],
         bound_agent_ids: list[str],
         title: str,
+        topic_id: str | None = None,
     ) -> ConversationThread:
         channel_binding = self._get_channel_binding_for(surface)
         room_policy_ref = channel_binding.room_policy_ref if surface == ConversationSurface.FEISHU_GROUP else None
@@ -195,6 +204,7 @@ class ConversationService:
             channel_binding_ref=channel_binding.binding_id,
             room_policy_ref=room_policy_ref,
             visible_room_ref=channel_id if surface == ConversationSurface.FEISHU_GROUP else None,
+            topic_id=topic_id,
             status="draft",
         )
         return self._threads.save(thread)
@@ -274,6 +284,7 @@ class ConversationService:
             channel_binding_ref=channel_binding.binding_id,
             room_policy_ref=room_policy_ref,
             visible_room_ref=request.channel_id if request.surface == ConversationSurface.FEISHU_GROUP else None,
+            topic_id=request.topic_id,
             status="draft",
         )
         return self._threads.save(thread)

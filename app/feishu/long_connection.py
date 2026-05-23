@@ -89,12 +89,15 @@ def _run_single_connection(employee_id: str) -> None:
 
     def on_message(event, app_id=config.app_id):
         logger.info("Received message event for app_id=%s, employee_id=%s", app_id, employee_id)
-        payload = feishu_sdk_event_to_payload(event)
-        payload["header"] = {
-            **(payload.get("header") or {}),
-            "app_id": app_id,
-        }
-        adapter.handle_payload(payload)
+        try:
+            payload = feishu_sdk_event_to_payload(event)
+            payload["header"] = {
+                **(payload.get("header") or {}),
+                "app_id": app_id,
+            }
+            adapter.handle_payload(payload)
+        except Exception:
+            logger.exception("handle_payload failed for app_id=%s, employee_id=%s", app_id, employee_id)
 
     dispatcher = (
         lark.EventDispatcherHandler.builder(encrypt_key, verification_token)

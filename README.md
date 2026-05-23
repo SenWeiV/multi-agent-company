@@ -308,6 +308,29 @@ docs/                 # Development plans and roadmaps
 
 ---
 
+## 📋 Update Log
+
+### 2026-05-23 · V1.8.1 — Session Isolation & Orchestration Fixes
+
+**Bug Fixes:**
+- **Session Isolation**: `/end` and `/reset` now properly isolate gateway sessions. After ending a conversation, the next message automatically creates a new `topic_id`, generating a distinct `session_key` — ensuring the LLM sees a clean context with no prior conversation leakage.
+- **Respect HANDOFF: none**: Removed forced handoff fallback that previously injected all downstream leads even when the agent explicitly declined handoff. COS can now reply independently without triggering unwanted multi-agent orchestration.
+- **Bot self-reply loop prevention**: Added `sender_type == "app"` filter to prevent bot messages from being processed as user input by other bots in the group.
+- **Summary phase redundancy**: `PhaseOrchestrator` now enforces constraints on summary phases — clears participants and caps `max_turns=2` to prevent repeated summarization loops.
+- **`/reset` crash fix**: Fixed `ImportError` (`get_openclaw_service` → `get_openclaw_provisioning_service`) that caused `/reset` to silently fail.
+
+**New Features:**
+- **`/new` command**: Start a fresh conversation topic within the same group chat without needing `/end` + new message.
+- **Gateway session clear**: `/reset` now attempts to clear gateway-side sessions (best-effort, graceful failure if gateway doesn't support DELETE).
+- **Ended thread auto-rotation**: Messages sent after `/end` automatically create a new topic — no manual `/new` required.
+
+**Infrastructure:**
+- Added `app/feishu/commands.py` — command utilities (`generate_topic_id`, command parsing).
+- Added test coverage: `test_session_rotation.py`, `test_feishu_commands.py`, `test_dead_letter_cleanup.py`, `test_work_ticket_fsm.py`.
+- V1.8 enhancement roadmap documented in `docs/development-plan/v1.8-enhancement-roadmap.md`.
+
+---
+
 ## 📄 License
 
 *To be decided (likely Apache-2.0 or MIT).*

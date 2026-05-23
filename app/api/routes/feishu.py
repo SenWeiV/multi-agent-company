@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from app.feishu.models import FeishuSendMessageRequest
 from app.feishu.services import get_feishu_surface_adapter_service
@@ -86,6 +89,24 @@ def list_feishu_replay_audit(limit: int = 20, source_outbound_ref: str | None = 
         chat_id=chat_id,
     )
     return entries[:limit]
+
+
+class BulkResolveRequest(BaseModel):
+    before: datetime
+
+
+@router.post("/dead-letters/{outbound_id}/resolve")
+def resolve_feishu_dead_letter(outbound_id: str):
+    try:
+        return get_feishu_surface_adapter_service().resolve_dead_letter(outbound_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/dead-letters/bulk-resolve")
+def bulk_resolve_feishu_dead_letters(request: BulkResolveRequest):
+    count = get_feishu_surface_adapter_service().bulk_resolve_dead_letters(before=request.before)
+    return {"resolved_count": count}
 
 
 @router.post("/outbound-messages/{outbound_id}/replay")
