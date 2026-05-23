@@ -170,3 +170,119 @@ class TestQuickAckIntegration:
                 surface="feishu_group",
                 channel_id="oc_test",
             ) is None
+
+
+class TestPhaseQuickAck:
+    def test_orchestrator_sends_ack_before_each_turn(self) -> None:
+        """Each agent should send a Quick ACK before their full reply in phase discussion."""
+        from app.orchestration.models import (
+            DiscussionPhase,
+            DiscussionPlan,
+            DiscussionRole,
+            PhaseParticipant,
+        )
+        from app.orchestration.phase_orchestrator import PhaseOrchestrator
+
+        plan = DiscussionPlan(phases=[
+            DiscussionPhase(
+                phase_id="test-phase",
+                title="设计技术方案",
+                lead_id="product-lead",
+                participants=[
+                    PhaseParticipant(employee_id="engineering-lead", role=DiscussionRole.PARTICIPANT),
+                ],
+                max_turns=4,
+            ),
+        ])
+
+        call_order: list[str] = []
+
+        def mock_generate_reply(*, employee_id: str, **kwargs):
+            call_order.append(f"reply:{employee_id}")
+            result = MagicMock()
+            result.reply_text = "PHASE_COMPLETE: yes" if len(call_order) > 4 else "Some analysis."
+            result.follow_up_texts = []
+            result.handoff_targets = []
+            result.handoff_reason = None
+            result.strategy = "native"
+            result.model_ref = "test"
+            result.session_key = f"session:{employee_id}"
+            result.error_detail = None
+            return result
+
+        def mock_send_message(*, employee_id: str, text: str):
+            call_order.append(f"send:{employee_id}")
+            result = MagicMock()
+            result.status = "sent"
+            result.error_detail = None
+            return result
+
+        def mock_quick_ack(employee_id: str, context_hint: str) -> str | None:
+            call_order.append(f"ack:{employee_id}")
+            return f"收到，{employee_id}来分析"
+
+        orchestrator = PhaseOrchestrator(
+            plan=plan,
+            global_turn_limit=10,
+            initial_visible_turn_count=1,
+            generate_reply_fn=mock_generate_reply,
+            send_message_fn=mock_send_message,
+            source_reply_text="Source framing.",
+            valid_employee_ids={"product-lead", "engineering-lead"},
+            quick_ack_fn=mock_quick_ack,
+        )
+        orchestrator.run()
+
+        # Verify ACK comes before reply for each turn
+        ack_indices = [i for i, x in enumerate(call_order) if x.startswith("ack:")]
+        reply_indices = [i for i, x in enumerate(call_order) if x.startswith("reply:")]
+        assert len(ack_indices) > 0
+        for ack_i, reply_i in zip(ack_indices, reply_indices):
+            assert ack_i < reply_i, f"ACK at {ack_i} should come before reply at {reply_i}"
+
+    def test_orchestrator_without_quick_ack_fn_works(self) -> None:
+        """PhaseOrchestrator works normally when quick_ack_fn is not provided."""
+        from app.orchestration.models import (
+            DiscussionPhase,
+            DiscussionPlan,
+            DiscussionRole,
+            PhaseParticipant,
+        )
+        from app.orchestration.phase_orchestrator import PhaseOrchestrator
+
+        plan = DiscussionPlan(phases=[
+            DiscussionPhase(
+                phase_id="test-phase",
+                title="Test",
+                lead_id="product-lead",
+                participants=[],
+                max_turns=2,
+            ),
+        ])
+
+        def mock_generate_reply(*, employee_id: str, **kwargs):
+            result = MagicMock()
+            result.reply_text = "Done.\nPHASE_COMPLETE: yes"
+            result.follow_up_texts = []
+            result.handoff_targets = []
+            result.handoff_reason = None
+            result.strategy = "native"
+            result.model_ref = "test"
+            result.session_key = "session:x"
+            result.error_detail = None
+            return result
+
+        send = MagicMock()
+        send.return_value = MagicMock(status="sent", error_detail=None)
+
+        orchestrator = PhaseOrchestrator(
+            plan=plan,
+            global_turn_limit=10,
+            initial_visible_turn_count=1,
+            generate_reply_fn=mock_generate_reply,
+            send_message_fn=send,
+            source_reply_text="Framing.",
+            valid_employee_ids={"product-lead"},
+        )
+        result = orchestrator.run()
+        assert result["reply_count"] >= 1

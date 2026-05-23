@@ -1893,6 +1893,22 @@ class FeishuSurfaceAdapterService:
                         ),
                     )
 
+                def _phase_quick_ack(employee_id: str, context_hint: str) -> str | None:
+                    if not get_settings().feishu_quick_ack_enabled:
+                        return None
+                    try:
+                        from app.openclaw.services import get_openclaw_gateway_adapter
+                        return get_openclaw_gateway_adapter().generate_quick_ack(
+                            employee_id=employee_id,
+                            user_message=context_hint,
+                            surface=surface.value,
+                            channel_id=channel_id,
+                            topic_id=thread.topic_id,
+                        )
+                    except Exception:
+                        logger.debug("Phase Quick ACK failed for %s (non-blocking)", employee_id)
+                        return None
+
                 orchestrator = PhaseOrchestrator(
                     plan=plan,
                     global_turn_limit=limit,
@@ -1905,6 +1921,7 @@ class FeishuSurfaceAdapterService:
                     emit_trace_event=_phase_emit_trace_event,
                     relationship_resolver=RelationshipResolver(COLLABORATION_EDGES, ROUTING_RULES),
                     convergence_detector=ConvergenceDetector(),
+                    quick_ack_fn=_phase_quick_ack,
                 )
                 phase_result = orchestrator.run()
                 logger.info(

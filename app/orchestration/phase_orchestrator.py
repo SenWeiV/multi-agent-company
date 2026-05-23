@@ -32,6 +32,7 @@ class PhaseOrchestrator:
         emit_trace_event: Callable[..., None] | None = None,
         relationship_resolver: RelationshipResolver | None = None,
         convergence_detector: ConvergenceDetector | None = None,
+        quick_ack_fn: Callable[[str, str], str | None] | None = None,
     ) -> None:
         self._plan = plan
         self._global_turn_limit = global_turn_limit
@@ -44,6 +45,7 @@ class PhaseOrchestrator:
         self._emit_trace_event = emit_trace_event
         self._relationship_resolver = relationship_resolver
         self._convergence_detector = convergence_detector
+        self._quick_ack_fn = quick_ack_fn
 
         self.reply_count = 0
         self.reply_errors: list[str] = []
@@ -132,6 +134,12 @@ class PhaseOrchestrator:
                 phase, speaker_id, role, turn_records, prior_context,
                 convergence_hint=convergence_hint_active and speaker_id == phase.lead_id,
             )
+
+            if self._quick_ack_fn is not None:
+                ack_text = self._quick_ack_fn(speaker_id, phase.title or phase.phase_id)
+                if ack_text:
+                    self._send_message(employee_id=speaker_id, text=ack_text)
+                    logger.info("Phase %s: %s sent Quick ACK", phase.phase_id, speaker_id)
 
             logger.info("Phase %s turn %d: generating reply for %s (%s)", phase.phase_id, phase.turns_used + 1, speaker_id, role.value)
             result = self._generate_reply(
