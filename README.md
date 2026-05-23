@@ -2,7 +2,7 @@
 
 > A multi-agent system that models real companies — where AI agents communicate **peer-to-peer through enterprise IM (Feishu/Lark)** based on explicit organizational relationships, and discussions are **structured by LLM-planned phases** with deterministic orchestration.
 
-**Status:** V1.8 · Phase Discussion + Primary Dispatcher Election · Running in production
+**Status:** V1.8.2 · Phase Discussion + Relationship Routing + Convergence Detection · Running in production
 
 ---
 
@@ -309,6 +309,23 @@ docs/                 # Development plans and roadmaps
 ---
 
 ## 📋 Update Log
+
+### 2026-05-23 · V1.8.2 — Quick ACK, Relationship-Aware Routing & Convergence Detection
+
+**New Features:**
+- **Quick ACK (§2.4)**: Before the main LLM reply (30-90s), agents now send a 1-2 sentence acknowledgment within 2-3 seconds — eliminating Lark SDK ping timeout (3003) disconnections. Uses isolated `:ack` session suffix, max_tokens=80, 8s timeout, best-effort (failure never blocks main reply).
+- **Relationship-Aware Speaker Selection (§2.3)**: `PhaseOrchestrator` now uses `RelationshipResolver` to rank participant speaking order by collaboration weight (`escalates_to=1.0`, `delegates_to=0.8`, `collaborates_with=0.5`) instead of fixed list order.
+- **Semantic Convergence Detection (§3.4)**: `ConvergenceDetector` analyzes discussion content via Jaccard similarity + length decay. When repetition exceeds threshold: `suggest_wrap_up` injects a hint to the lead, `force_complete` auto-ends the phase — preventing wasted turns on circular discussions.
+
+**Integration:**
+- `app/feishu/services.py` source turn sends Quick ACK before `generate_reply()`.
+- `PhaseOrchestrator` construction in feishu integration injects `RelationshipResolver` and `ConvergenceDetector`.
+- New trace events: `phase_convergence_forced`, relationship resolver warnings logged.
+
+**Tests (TDD, 94 passing):**
+- `tests/test_quick_ack.py` (6 tests): success, timeout→None, error→None, session isolation, config disable, non-blocking failure.
+- `tests/test_relationship_resolver.py` (12 tests): weight calculation, ranking, validation, context generation, orchestrator integration.
+- `tests/test_convergence_detector.py` (11 tests): diverse→continue, high repetition→force_complete, moderate→suggest, threshold customization, orchestrator integration.
 
 ### 2026-05-23 · V1.8.1 — Session Isolation & Orchestration Fixes
 

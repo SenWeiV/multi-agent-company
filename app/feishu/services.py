@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from app.artifacts.services import get_artifact_store_service
-from app.company.bootstrap import get_default_downstream_targets, get_employees
+from app.company.bootstrap import COLLABORATION_EDGES, ROUTING_RULES, get_default_downstream_targets, get_employees
 from app.company.models import TriggerType
 from app.control_plane.models import RunEvent
 from app.control_plane.services import get_control_plane_service
@@ -792,6 +792,31 @@ class FeishuSurfaceAdapterService:
                     source_visible_turn_count,
                 )
             else:
+                if get_settings().feishu_quick_ack_enabled:
+                    try:
+                        from app.openclaw.services import get_openclaw_gateway_adapter
+                        ack_text = get_openclaw_gateway_adapter().generate_quick_ack(
+                            employee_id=binding.virtual_employee,
+                            user_message=normalized_intent,
+                            surface=surface.value,
+                            channel_id=channel_id,
+                            topic_id=intake_result.thread.topic_id,
+                        )
+                        if ack_text:
+                            self.send_text_message(
+                                FeishuSendMessageRequest(
+                                    app_id=app_id,
+                                    chat_id=chat_id,
+                                    text=ack_text,
+                                    work_ticket_ref=intake_result.command_result.work_ticket.ticket_id,
+                                    thread_ref=intake_result.thread.thread_id,
+                                    source_kind="quick_ack",
+                                )
+                            )
+                            logger.info("[%s] Quick ACK sent before source turn", binding.virtual_employee)
+                    except Exception:
+                        logger.debug("Quick ACK failed (non-blocking)", exc_info=True)
+
                 dialogue_result = dialogue_service.generate_reply(
                     employee_id=binding.virtual_employee,
                     user_message=normalized_intent,
@@ -1768,6 +1793,8 @@ class FeishuSurfaceAdapterService:
         if get_settings().feishu_phase_discussion_enabled and source_reply_text:
             from app.orchestration.plan_parser import parse_phase_plan
             from app.orchestration.phase_orchestrator import PhaseOrchestrator
+            from app.orchestration.convergence_detector import ConvergenceDetector
+            from app.orchestration.relationship_resolver import RelationshipResolver
 
             logger.info(
                 "Phase discussion enabled — attempting plan detection (source=%s, phase_plan_raw=%s)",
@@ -1876,6 +1903,8 @@ class FeishuSurfaceAdapterService:
                     valid_employee_ids=all_employee_ids,
                     source_employee_id=source_employee_id,
                     emit_trace_event=_phase_emit_trace_event,
+                    relationship_resolver=RelationshipResolver(COLLABORATION_EDGES, ROUTING_RULES),
+                    convergence_detector=ConvergenceDetector(),
                 )
                 phase_result = orchestrator.run()
                 logger.info(

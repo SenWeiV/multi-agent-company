@@ -1109,6 +1109,60 @@ class OpenClawGatewayAdapter:
             forced_handoff_targets=forced_handoff_targets,
         )
 
+    def generate_quick_ack(
+        self,
+        *,
+        employee_id: str,
+        user_message: str,
+        surface: str,
+        channel_id: str,
+        topic_id: str | None = None,
+    ) -> str | None:
+        settings = get_settings()
+        if not settings.feishu_quick_ack_enabled:
+            return None
+
+        agent_config, _, _ = self._config_service.get_provider_for_agent(employee_id)
+        session_binding = self._provisioning_service.get_session_binding(employee_id, surface, channel_id, topic_id=topic_id)
+        ack_session_key = f"{session_binding.session_key}:ack"
+
+        messages = [
+            {
+                "role": "system",
+                "content": "用1-2句中文确认你理解了消息的核心意图和你的处理方向。不要给出实质内容，不要使用协议行。",
+            },
+            {"role": "user", "content": user_message},
+        ]
+
+        payload = {
+            "model": f"openclaw:{agent_config.openclaw_agent_id}",
+            "messages": messages,
+            "max_tokens": settings.feishu_quick_ack_max_tokens,
+            "temperature": 0.3,
+        }
+        headers = {
+            "Content-Type": "application/json; charset=utf-8",
+            "X-OpenClaw-Session-Key": ack_session_key,
+            "X-OpenClaw-Agent-Id": agent_config.openclaw_agent_id,
+        }
+        token = settings.openclaw_gateway_token or settings.openclaw_gateway_api_key
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        request = Request(
+            self._native_gateway_chat_url(settings.openclaw_gateway_base_url),
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=8) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+            return self._extract_chat_content(response_payload)
+        except Exception:
+            logger.debug("Quick ACK generation failed for %s (best-effort)", employee_id)
+            return None
+
     def infer_visible_handoff_targets(
         self,
         *,

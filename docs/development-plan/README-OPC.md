@@ -203,6 +203,15 @@ This repo is part exploration, part hypothesis test. Constructive challenge is w
 
 ## 📋 Update Log
 
+### 2026-05-23 · V1.8.2 — Quick ACK, Relationship-Aware Routing & Convergence Detection
+
+**New Features:**
+- **Quick ACK**: Agents send a 1-2 sentence acknowledgment (2-3s) before the full reply (30-90s) — eliminates Lark SDK ping timeout. Isolated `:ack` session, max_tokens=80, best-effort.
+- **Relationship-Aware Speaker Selection**: `PhaseOrchestrator` ranks participants by `CollaborationEdge` weight (escalates_to=1.0, delegates_to=0.8, collaborates_with=0.5).
+- **Semantic Convergence Detection**: Jaccard similarity + length decay detects repetitive discussion → `suggest_wrap_up` or `force_complete`.
+
+**Tests (TDD, 94 passing):** `test_quick_ack.py` (6), `test_relationship_resolver.py` (12), `test_convergence_detector.py` (11).
+
 ### 2026-05-23 · V1.8.1 — Session Isolation & Orchestration Fixes
 
 **Bug Fixes:**

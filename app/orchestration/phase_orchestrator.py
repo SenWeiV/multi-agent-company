@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+from app.orchestration.convergence_detector import ConvergenceDetector
 from app.orchestration.models import (
     DiscussionPlan,
     DiscussionPhase,
@@ -11,6 +12,7 @@ from app.orchestration.models import (
     PhaseTurnRecord,
 )
 from app.orchestration.plan_parser import parse_phase_signals, strip_phase_protocol_lines
+from app.orchestration.relationship_resolver import RelationshipResolver
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,8 @@ class PhaseOrchestrator:
         valid_employee_ids: set[str],
         source_employee_id: str | None = None,
         emit_trace_event: Callable[..., None] | None = None,
+        relationship_resolver: RelationshipResolver | None = None,
+        convergence_detector: ConvergenceDetector | None = None,
     ) -> None:
         self._plan = plan
         self._global_turn_limit = global_turn_limit
@@ -38,6 +42,8 @@ class PhaseOrchestrator:
         self._valid_employee_ids = valid_employee_ids
         self._source_employee_id = source_employee_id
         self._emit_trace_event = emit_trace_event
+        self._relationship_resolver = relationship_resolver
+        self._convergence_detector = convergence_detector
 
         self.reply_count = 0
         self.reply_errors: list[str] = []
@@ -104,6 +110,7 @@ class PhaseOrchestrator:
         )
 
         completed_by_signal = False
+        convergence_hint_active = False
 
         while phase.turns_used < phase.max_turns:
             if self._visible_turn_count >= self._global_turn_limit:
@@ -122,7 +129,8 @@ class PhaseOrchestrator:
             )
 
             phase_context = self._build_phase_turn_context(
-                phase, speaker_id, role, turn_records, prior_context
+                phase, speaker_id, role, turn_records, prior_context,
+                convergence_hint=convergence_hint_active and speaker_id == phase.lead_id,
             )
 
             logger.info("Phase %s turn %d: generating reply for %s (%s)", phase.phase_id, phase.turns_used + 1, speaker_id, role.value)
@@ -199,6 +207,21 @@ class PhaseOrchestrator:
                 if self._is_in_phase(handoff_target, phase):
                     self._push_next_speaker(phase, handoff_target, turn_records)
 
+            if self._convergence_detector is not None:
+                conv_signal = self._convergence_detector.evaluate(turn_records, phase)
+                if conv_signal.recommendation == "force_complete":
+                    phase.status = PhaseStatus.COMPLETED
+                    self._phase_summaries.append(self._summarize_phase(phase, turn_records))
+                    self._emit(
+                        "phase_convergence_forced",
+                        f"Phase {phase.phase_id} force-completed by convergence detector",
+                        {"phase_id": phase.phase_id, "turns_used": str(phase.turns_used), "repetition_ratio": f"{conv_signal.repetition_ratio:.2f}"},
+                    )
+                    completed_by_signal = True
+                    return
+                elif conv_signal.recommendation == "suggest_wrap_up":
+                    convergence_hint_active = True
+
         phase.status = PhaseStatus.COMPLETED
         self._phase_summaries.append(self._summarize_phase(phase, turn_records))
         if not completed_by_signal:
@@ -226,6 +249,8 @@ class PhaseOrchestrator:
         unspoken = [eid for eid in all_participants if eid not in participant_spoken]
 
         if unspoken:
+            if self._relationship_resolver is not None:
+                unspoken = self._relationship_resolver.rank_participants(phase.lead_id, unspoken)
             return unspoken[0]
 
         last_speaker = turn_records[-1].speaker_id
@@ -265,6 +290,7 @@ class PhaseOrchestrator:
         role: DiscussionRole,
         turn_records: list[PhaseTurnRecord],
         prior_phase_context: str,
+        convergence_hint: bool = False,
     ) -> str:
         parts: list[str] = []
 
@@ -304,6 +330,18 @@ class PhaseOrchestrator:
             for rec in turn_records:
                 history_lines.append(f"[{rec.speaker_id} ({rec.role.value})]: {rec.reply_text}")
             parts.append(f"=== 本阶段讨论记录 ===\n" + "\n".join(history_lines))
+
+        if self._relationship_resolver is not None:
+            rel_ctx = self._relationship_resolver.get_relationship_context(speaker_id, phase)
+            if rel_ctx:
+                parts.append(rel_ctx)
+
+        if convergence_hint:
+            parts.append(
+                "=== 收敛提示 ===\n"
+                "系统检测到本阶段讨论已趋于收敛（观点重复度较高）。"
+                "建议总结当前讨论要点并声明 PHASE_COMPLETE: yes 结束本阶段。"
+            )
 
         return "\n\n".join(parts)
 

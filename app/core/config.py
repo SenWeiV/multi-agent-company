@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     feishu_phase_max_turns_per_phase: int = 10
     feishu_phase_max_phases: int = 5
     feishu_phase_plan_retry_enabled: bool = True
+    feishu_quick_ack_enabled: bool = True
+    feishu_quick_ack_max_tokens: int = 80
 
     model_config = SettingsConfigDict(
         env_file=".env",
