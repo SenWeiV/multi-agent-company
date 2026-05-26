@@ -1127,7 +1127,7 @@ class OpenClawGatewayAdapter:
         messages = [
             {
                 "role": "system",
-                "content": "用1-2句中文确认你理解了消息的核心意图和你的处理方向。不要给出实质内容，不要使用协议行。",
+                "content": "用一句话（15字以内）确认收到并说明你接下来要做什么。格式示例：'收到，我来做XX分析。' 不要复述用户消息，不要给实质内容。",
             },
             {"role": "user", "content": user_message},
         ]

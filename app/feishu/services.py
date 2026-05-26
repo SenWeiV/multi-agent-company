@@ -2423,6 +2423,8 @@ class FeishuSurfaceAdapterService:
         for outbound in self._outbound.list():
             if outbound.thread_ref != thread_ref:
                 continue
+            if getattr(outbound, "source_kind", "") == "quick_ack":
+                continue
             role = "assistant"
             if outbound.app_id != current_app_id:
                 role = f"visible-peer:{outbound.app_id}"
@@ -3252,6 +3254,8 @@ class FeishuSurfaceAdapterService:
 
         for outbound in self._outbound.list():
             if outbound.receive_id != chat_id:
+                continue
+            if getattr(outbound, "source_kind", "") == "quick_ack":
                 continue
             actor = "assistant" if outbound.app_id == current_app_id else f"visible-peer:{outbound.app_id}"
             entries.append((outbound.created_at.timestamp(), f"[{actor}] {outbound.text}"))
