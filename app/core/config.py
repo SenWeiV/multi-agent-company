@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     feishu_phase_plan_retry_enabled: bool = True
     feishu_quick_ack_enabled: bool = True
     feishu_quick_ack_max_tokens: int = 120
+    feishu_auto_clear_session_on_source: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",

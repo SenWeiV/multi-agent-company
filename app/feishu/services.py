@@ -792,6 +792,17 @@ class FeishuSurfaceAdapterService:
                     source_visible_turn_count,
                 )
             else:
+                if get_settings().feishu_auto_clear_session_on_source:
+                    try:
+                        from app.openclaw.services import get_openclaw_gateway_adapter
+                        adapter = get_openclaw_gateway_adapter()
+                        session_binding = adapter._provisioning_service.get_session_binding(
+                            binding.virtual_employee, surface.value, channel_id, topic_id=intake_result.thread.topic_id,
+                        )
+                        adapter.clear_session(session_binding.session_key)
+                    except Exception:
+                        logger.debug("Auto session clear failed (non-blocking)")
+
                 if get_settings().feishu_quick_ack_enabled:
                     try:
                         from app.openclaw.services import get_openclaw_gateway_adapter
@@ -1906,7 +1917,7 @@ class FeishuSurfaceAdapterService:
                             topic_id=thread.topic_id,
                         )
                     except Exception:
-                        logger.debug("Phase Quick ACK failed for %s (non-blocking)", employee_id)
+                        logger.warning("Phase Quick ACK failed for %s (non-blocking)", employee_id)
                         return None
 
                 orchestrator = PhaseOrchestrator(

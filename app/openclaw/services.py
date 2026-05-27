@@ -868,6 +868,11 @@ class OpenClawGatewayAdapter:
         session_binding = self._provisioning_service.get_session_binding(employee_id, surface, channel_id, topic_id=topic_id)
         workspace_bundle = self._provisioning_service.get_workspace_bundle(employee_id)
 
+        if turn_mode == "phase_discussion":
+            import uuid
+            ephemeral_key = f"{session_binding.session_key}:phase-{uuid.uuid4().hex[:8]}"
+            session_binding = session_binding.model_copy(update={"session_key": ephemeral_key})
+
         messages = [
             {
                 "role": "system",
@@ -1153,11 +1158,11 @@ class OpenClawGatewayAdapter:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=6) as response:
+            with urlopen(request, timeout=10) as response:
                 response_payload = json.loads(response.read().decode("utf-8"))
             return self._extract_chat_content(response_payload)
         except Exception:
-            logger.debug("Quick ACK generation failed for %s (best-effort)", employee_id)
+            logger.warning("Quick ACK generation failed for %s (best-effort)", employee_id)
             return None
 
     def infer_visible_handoff_targets(
